@@ -1,0 +1,6 @@
+{
+  "name": "Stock",
+  "description": "Sistema de gestão de estoque e vendas para a Secretaria Paroquial, com foco em simplicidade, responsividade e visual clássico .NET.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
