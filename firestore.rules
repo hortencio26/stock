@@ -57,8 +57,9 @@ service cloud.firestore {
         && data.category is string && data.category.size() <= 100
         && data.quantity is number && data.quantity >= 0
         && data.costPrice is number && data.costPrice >= 0
-        && (data.salePrice == null || (data.salePrice is number && data.salePrice >= 0))
+        && (!('salePrice' in data) || data.salePrice == null || (data.salePrice is number && data.salePrice >= 0))
         && data.minStock is number && data.minStock >= 0
+        && (!('type' in data) || (data.type == 'produto' || data.type == 'servico'))
         && data.createdAt is string && data.createdAt.size() <= 50
         && data.updatedAt is string && data.updatedAt.size() <= 50;
     }
@@ -101,8 +102,8 @@ service cloud.firestore {
         && data.sellerId is string && data.sellerId.size() <= 128
         && data.sellerName is string && data.sellerName.size() <= 150
         && data.timestamp is string && data.timestamp.size() <= 50
-        && (data.customerName == null || (data.customerName is string && data.customerName.size() <= 150))
-        && (data.customerPhone == null || (data.customerPhone is string && data.customerPhone.size() <= 30));
+        && (!('customerName' in data) || data.customerName == null || (data.customerName is string && data.customerName.size() <= 150))
+        && (!('customerPhone' in data) || data.customerPhone == null || (data.customerPhone is string && data.customerPhone.size() <= 30));
     }
 
     match /sales/{saleId} {
@@ -148,6 +149,11 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming());
       allow update, delete: if false;
+    }
+
+    // Support collection for system configurations / initial seeding state
+    match /system_config/{configId} {
+      allow read, write: if isSignedIn();
     }
 
     // Support collection for Admins list

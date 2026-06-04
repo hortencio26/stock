@@ -361,6 +361,8 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   // FORM COMPRAS / DE CADASTRO STATES:
   const [formMode, setFormMode] = useState<'NOVO' | 'EDITAR' | 'COMPRA_RECORRENTE'>('NOVO');
   const [selectedProductId, setSelectedProductId] = useState<string>(''); // Used for existing product fast purchase
+  const [productType, setProductType] = useState<'produto' | 'servico'>('produto');
+  const [modalSalePrice, setModalSalePrice] = useState<string>('');
   const [productCode, setProductCode] = useState<string>('');
   const [productName, setProductName] = useState<string>('');
   const [productCategory, setProductCategory] = useState<string>(() => {
@@ -383,6 +385,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
   // PRODUCT REGISTER & EDIT MODAL STATE:
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // PRICING TAB STATE:
   const [pricingInputs, setPricingInputs] = useState<Record<string, string>>({});
@@ -587,6 +590,8 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
     setProductCode(prod.code);
     setProductName(prod.name);
     setProductCategory(prod.category);
+    setProductType(prod.type || 'produto');
+    setModalSalePrice(prod.salePrice !== undefined && prod.salePrice !== null ? prod.salePrice.toString() : '');
     setPurchaseQuantity(prod.quantity);
     setCostPrice(prod.costPrice);
     setPurchaseMinStock(prod.minStock);
@@ -605,6 +610,8 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
     setProductCode(prod.code);
     setProductName(prod.name);
     setProductCategory(prod.category);
+    setProductType(prod.type || 'produto');
+    setModalSalePrice(prod.salePrice !== undefined && prod.salePrice !== null ? prod.salePrice.toString() : '');
     setPurchaseQuantity(10); // default refill
     setCostPrice(prod.costPrice);
     setPurchaseMinStock(prod.minStock);
@@ -618,6 +625,8 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   const handleClearForm = async () => {
     setFormMode('NOVO');
     setSelectedProductId('');
+    setProductType('produto');
+    setModalSalePrice('');
     
     // Gera código sequencial automático e exclusivo de 6 algarismos direto da nuvem (ou cache se offline)
     let allProds: Product[] = [];
@@ -652,148 +661,182 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!productCode.trim()) {
-      triggerStatus('error', 'O Código (SKU) do produto é obrigatório.');
-      return;
-    }
-    if (!productName.trim()) {
-      triggerStatus('error', 'O Nome do produto é obrigatório.');
-      return;
-    }
-    if (purchaseQuantity < 0) {
-      triggerStatus('error', 'A quantidade não pode ser negativa.');
-      return;
-    }
-    if (costPrice <= 0) {
-      triggerStatus('error', 'O Preço de Custo deve ser maior que 0,00 MTn.');
-      return;
-    }
-
-    const allProducts = await dbService.getProducts();
-
-    if (formMode === 'NOVO') {
-      // Check if product with same code already exists
-      const codeExists = allProducts.find(p => p.code.trim() === productCode.trim());
-      if (codeExists) {
-        if (confirm(`Já existe um produto cadastrado com o código "${productCode}" (${codeExists.name}). Deseja adicionar estoque a este produto em vez de criar um novo?`)) {
-          setFormMode('COMPRA_RECORRENTE');
-          setSelectedProductId(codeExists.id);
-          setProductName(codeExists.name);
-          setProductCategory(codeExists.category);
-          setCostPrice(codeExists.costPrice);
-          setPurchaseMinStock(codeExists.minStock);
-          setExistingSalePrice(codeExists.salePrice);
+    try {
+      if (!productCode.trim()) {
+        triggerStatus('error', 'O Código (SKU) do produto é obrigatório.');
+        return;
+      }
+      if (!productName.trim()) {
+        triggerStatus('error', 'O Nome do produto é obrigatório.');
+        return;
+      }
+      
+      if (productType === 'produto') {
+        if (purchaseQuantity < 0) {
+          triggerStatus('error', 'A quantidade não pode ser negativa.');
           return;
         }
+        if (costPrice <= 0) {
+          triggerStatus('error', 'O Preço de Custo deve ser maior que 0,00 MTn.');
+          return;
+        }
+      }
+
+      let parsedSalePrice: number | null = null;
+      if (modalSalePrice.trim()) {
+        const numPrice = Number(modalSalePrice.replace(',', '.'));
+        if (isNaN(numPrice) || numPrice <= 0) {
+          triggerStatus('error', 'O Preço de Venda / Taxa deve ser um número válido maior que 0,00 MTn.');
+          return;
+        }
+        parsedSalePrice = numPrice;
+      } else if (productType === 'servico') {
+        triggerStatus('error', 'O Preço de Venda / Regulamento da Taxa é obrigatório para Serviços / Taxas.');
         return;
       }
 
-      // Safe new creation
-      const newProduct: Product = {
-        id: `prod_${Date.now()}`,
-        code: productCode.trim(),
-        name: productName.trim(),
-        category: productCategory,
-        quantity: purchaseQuantity,
-        costPrice: costPrice,
-        minStock: purchaseMinStock,
-        createdAt: new Date(purchaseDate).toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+      setIsSaving(true);
 
-      await dbService.saveProduct(newProduct, currentUser.id, currentUser.name);
-      
-      // Register purchase log for period statistics
-      await dbService.registerPurchase(
-        newProduct.id,
-        newProduct.name,
-        newProduct.category,
-        newProduct.quantity,
-        newProduct.costPrice,
-        currentUser.id,
-        currentUser.name,
-        new Date(purchaseDate).toISOString()
-      );
-      
-      // Log purchase event in audit
-      await dbService.log(
-        currentUser.id, 
-        currentUser.name, 
-        'CADASTRO_PRODUTO', 
-        `Compra/Entrada de novo produto: ${purchaseQuantity}x "${productName.trim()}" (Custo Unit.: ${costPrice.toFixed(2)} MTn) de Categoria "${productCategory}"`
-      );
+      const allProducts = await dbService.getProducts();
 
-      triggerStatus('success', `Lote inicial de "${productName}" comprado e inserido com sucesso!`);
-      await loadData();
-      await handleClearForm();
-      setIsProductModalOpen(false);
-    } 
-    else if (formMode === 'COMPRA_RECORRENTE') {
-      // Look up target product
-      const target = allProducts.find(p => p.id === selectedProductId);
-      if (!target) {
-        triggerStatus('error', 'Produto original não localizado no banco de dados.');
-        return;
+      if (formMode === 'NOVO') {
+        // Check if product with same code already exists
+        const codeExists = allProducts.find(p => p.code.trim() === productCode.trim());
+        if (codeExists) {
+          setIsSaving(false);
+          if (confirm(`Já existe um produto cadastrado com o código "${productCode}" (${codeExists.name}). Deseja adicionar estoque a este produto em vez de criar um novo?`)) {
+            setFormMode('COMPRA_RECORRENTE');
+            setSelectedProductId(codeExists.id);
+            setProductName(codeExists.name);
+            setProductCategory(codeExists.category);
+            setCostPrice(codeExists.costPrice);
+            setPurchaseMinStock(codeExists.minStock);
+            setExistingSalePrice(codeExists.salePrice);
+            return;
+          }
+          return;
+        }
+
+        // Safe new creation
+        const newProduct: Product = {
+          id: `prod_${Date.now()}`,
+          code: productCode.trim(),
+          name: productName.trim(),
+          category: productCategory,
+          quantity: productType === 'servico' ? 0 : purchaseQuantity,
+          costPrice: productType === 'servico' ? 0 : costPrice,
+          minStock: productType === 'servico' ? 0 : purchaseMinStock,
+          type: productType,
+          createdAt: new Date(purchaseDate).toISOString(),
+          updatedAt: new Date().toISOString(),
+          salePrice: parsedSalePrice
+        };
+
+        await dbService.saveProduct(newProduct, currentUser.id, currentUser.name);
+        
+        if (productType === 'produto') {
+          // Register purchase log for period statistics
+          await dbService.registerPurchase(
+            newProduct.id,
+            newProduct.name,
+            newProduct.category,
+            newProduct.quantity,
+            newProduct.costPrice,
+            currentUser.id,
+            currentUser.name,
+            new Date(purchaseDate).toISOString()
+          );
+        }
+        
+        // Log purchase event in audit
+        await dbService.log(
+          currentUser.id, 
+          currentUser.name, 
+          'CADASTRO_PRODUTO', 
+          productType === 'servico'
+            ? `Cadastro de novo serviço/taxa: "${productName.trim()}" (Preço/Taxa: ${parsedSalePrice?.toFixed(2)} MTn)`
+            : `Compra/Entrada de novo produto: ${purchaseQuantity}x "${productName.trim()}" (Custo Unit.: ${costPrice.toFixed(2)} MTn) de Categoria "${productCategory}"`
+        );
+
+        triggerStatus('success', 'Registo efetuado com sucesso. O formulário foi limpo para um novo cadastro.');
+        await loadData();
+        await handleClearForm();
       }
+      else if (formMode === 'COMPRA_RECORRENTE') {
+        // Look up target product
+        const target = allProducts.find(p => p.id === selectedProductId);
+        if (!target) {
+          triggerStatus('error', 'Produto original não localizado no banco de dados.');
+          return;
+        }
 
-      const originalQty = target.quantity;
-      const finalProduct: Product = {
-        ...target,
-        quantity: originalQty + purchaseQuantity, // Sum the purchased quantity directly!
-        costPrice: costPrice, // Update with the latest cost price
-        updatedAt: new Date().toISOString()
-      };
+        const originalQty = target.quantity;
+        const finalProduct: Product = {
+          ...target,
+          quantity: originalQty + purchaseQuantity, // Sum the purchased quantity directly!
+          costPrice: costPrice, // Update with the latest cost price
+          updatedAt: new Date().toISOString(),
+          salePrice: parsedSalePrice !== null ? parsedSalePrice : (target.salePrice !== undefined && target.salePrice !== null ? target.salePrice : null)
+        };
 
-      await dbService.saveProduct(finalProduct, currentUser.id, currentUser.name);
+        await dbService.saveProduct(finalProduct, currentUser.id, currentUser.name);
 
-      // Register purchase log for period statistics
-      await dbService.registerPurchase(
-        target.id,
-        target.name,
-        target.category,
-        purchaseQuantity,
-        costPrice,
-        currentUser.id,
-        currentUser.name,
-        new Date(purchaseDate).toISOString()
-      );
+        // Register purchase log for period statistics
+        await dbService.registerPurchase(
+          target.id,
+          target.name,
+          target.category,
+          purchaseQuantity,
+          costPrice,
+          currentUser.id,
+          currentUser.name,
+          new Date(purchaseDate).toISOString()
+        );
 
-      // Audit purchase logs
-      await dbService.log(
-        currentUser.id,
-        currentUser.name,
-        'ESTOQUE_AJUSTADO',
-        `Entrada de estoque: Compra de +${purchaseQuantity} unidades do produto "${target.name}" (Novo Total: ${originalQty + purchaseQuantity})`
-      );
+        // Audit purchase logs
+        await dbService.log(
+          currentUser.id,
+          currentUser.name,
+          'ESTOQUE_AJUSTADO',
+          `Entrada de estoque: Compra de +${purchaseQuantity} unidades do produto "${target.name}" (Novo Total: ${originalQty + purchaseQuantity})`
+        );
 
-      triggerStatus('success', `Entrada de estoque de +${purchaseQuantity}x "${target.name}" registrada com sucesso!`);
-      await loadData();
-      await handleClearForm();
-      setIsProductModalOpen(false);
-    }
-    else if (formMode === 'EDITAR') {
-      const target = allProducts.find(p => p.id === selectedProductId);
-      if (!target) {
-        triggerStatus('error', 'Produto para edição não localizado no sistema.');
-        return;
+        triggerStatus('success', 'Registo efetuado com sucesso');
+        await loadData();
+        await handleClearForm();
+        setIsProductModalOpen(false);
       }
+      else if (formMode === 'EDITAR') {
+        const target = allProducts.find(p => p.id === selectedProductId);
+        if (!target) {
+          triggerStatus('error', 'Produto para edição não localizado no sistema.');
+          return;
+        }
 
-      const finalProduct: Product = {
-        ...target,
-        code: productCode.trim(),
-        name: productName.trim(),
-        category: productCategory,
-        quantity: purchaseQuantity, // manual set in edit mode
-        costPrice: costPrice,
-        minStock: purchaseMinStock,
-        updatedAt: new Date().toISOString()
-      };
+        const finalProduct: Product = {
+          ...target,
+          code: productCode.trim(),
+          name: productName.trim(),
+          category: productCategory,
+          quantity: productType === 'servico' ? 0 : purchaseQuantity, // manual set in edit mode
+          costPrice: productType === 'servico' ? 0 : costPrice,
+          minStock: productType === 'servico' ? 0 : purchaseMinStock,
+          type: productType,
+          updatedAt: new Date().toISOString(),
+          salePrice: parsedSalePrice !== null ? parsedSalePrice : (target.salePrice !== undefined && target.salePrice !== null ? target.salePrice : null)
+        };
 
-      await dbService.saveProduct(finalProduct, currentUser.id, currentUser.name);
-      triggerStatus('success', `Informações do produto "${productName}" atualizadas com sucesso!`);
-      await loadData();
-      await handleClearForm();
-      setIsProductModalOpen(false);
+        await dbService.saveProduct(finalProduct, currentUser.id, currentUser.name);
+        triggerStatus('success', 'Registo efetuado com sucesso');
+        await loadData();
+        await handleClearForm();
+        setIsProductModalOpen(false);
+      }
+    } catch (err: any) {
+      console.error("Erro ao salvar produto:", err);
+      triggerStatus('error', 'Erro ao salvar. Verifique a ligação ao banco de dados.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -1460,8 +1503,8 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                     {/* Button to register a new product */}
                     <button
                       type="button"
-                      onClick={() => {
-                        handleClearForm();
+                      onClick={async () => {
+                        await handleClearForm();
                         setFormMode('NOVO');
                         setIsProductModalOpen(true);
                       }}
@@ -1483,9 +1526,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 <table className="excel-grid min-w-full font-sans text-xs">
                   <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
                     <tr>
-                      <th className="py-1.5 px-3 text-left w-24">CÓDIGO (SKU)</th>
+                      <th className="py-1.5 px-3 text-left w-24">CÓDIGO</th>
                       <th className="py-1.5 px-3 text-left">DESCRIÇÃO DO PRODUTO</th>
-                      <th className="py-1.5 px-3 text-left w-36">GRUPO / CATEGORIA</th>
+                      <th className="py-1.5 px-3 text-left w-36">CATEGORIA</th>
                       <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap">CUSTO (MTn)</th>
                       <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap">VENDA (MTn)</th>
                       <th className="py-1.5 px-3 text-right w-20">STOCK</th>
@@ -1499,7 +1542,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                       const isLow = p.quantity > 0 && p.quantity <= p.minStock;
                       let stockBadge = <span className="bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded text-[10px]">Normal</span>;
                       
-                      if (isZero) {
+                      if (p.type === 'servico') {
+                        stockBadge = <span className="bg-slate-100 text-slate-600 border border-slate-300 font-semibold px-2 py-0.5 rounded text-[10px]">Não Aplicável</span>;
+                      } else if (isZero) {
                         stockBadge = <span className="bg-red-200 text-red-900 border border-red-300 font-bold px-2 py-0.5 rounded text-[10px]">Esgotado</span>;
                       } else if (isLow) {
                         stockBadge = <span className="bg-amber-100 text-amber-800 border border-amber-300 font-semibold px-2 py-0.5 rounded text-[10px]">Baixo</span>;
@@ -1524,7 +1569,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                             {p.category}
                           </td>
                           <td className="py-1.5 px-3 text-slate-600 text-right font-mono whitespace-nowrap">
-                            {p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
+                            {p.type === 'servico' ? 'N/A' : `${p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn`}
                           </td>
                           <td className="py-1.5 px-3 text-slate-900 text-right font-mono whitespace-nowrap">
                             {p.salePrice 
@@ -1532,8 +1577,12 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                               : <span className="text-red-500 italic text-[10px] whitespace-nowrap">Não precificado</span>
                             }
                           </td>
-                          <td className={`py-1.5 px-3 text-right font-mono font-bold ${isZero ? 'text-red-650 bg-red-50 animate-pulse' : 'text-slate-800'}`}>
-                            {p.quantity}
+                          <td className={`py-1.5 px-3 text-right font-mono font-bold ${p.type === 'servico' ? 'text-slate-500' : isZero ? 'text-red-650 bg-red-50 animate-pulse' : 'text-slate-800'}`}>
+                            {p.type === 'servico' ? (
+                              <span className="bg-slate-100 text-slate-600 border border-slate-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">N/A</span>
+                            ) : (
+                              p.quantity
+                            )}
                           </td>
                           <td className="py-1.5 px-3 text-center">{stockBadge}</td>
                           <td className="py-1.5 px-3 text-center">
@@ -1548,13 +1597,15 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                               </button>
                               
                               {/* Option 2: Record purchase/stock addition */}
-                              <button
-                                onClick={() => handleSelectProductForStockRefill(p)}
-                                className="text-[10px] font-mono bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-250 py-0.5 px-2 rounded transition font-bold cursor-pointer"
-                                title="Registar nova compra de lote"
-                              >
-                                Comprar
-                              </button>
+                              {p.type !== 'servico' && (
+                                <button
+                                  onClick={() => handleSelectProductForStockRefill(p)}
+                                  className="text-[10px] font-mono bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-250 py-0.5 px-2 rounded transition font-bold cursor-pointer"
+                                  title="Registar nova compra de lote"
+                                >
+                                  Comprar
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1676,14 +1727,18 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                                 {p.category}
                               </td>
                               <td className="py-1.5 px-3 text-right font-mono whitespace-nowrap">
-                                <button
-                                  type="button"
-                                  onClick={() => handleSelectProductForStockRefill(p)}
-                                  className="text-blue-700 hover:text-blue-950 hover:underline font-mono text-right cursor-pointer focus:outline-none font-semibold"
-                                  title="Registrar nova compra / Lançar lote deste item"
-                                >
-                                  {p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
-                                </button>
+                                {p.type === 'servico' ? (
+                                  <span className="text-slate-500">N/A</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectProductForStockRefill(p)}
+                                    className="text-blue-700 hover:text-blue-950 hover:underline font-mono text-right cursor-pointer focus:outline-none font-semibold"
+                                    title="Registrar nova compra / Lançar lote deste item"
+                                  >
+                                    {p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
+                                  </button>
+                                )}
                               </td>
                               <td className="py-1.5 px-3 text-right font-mono whitespace-nowrap">
                                 {hasSalePrice ? (
@@ -1693,7 +1748,11 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                                 )}
                               </td>
                               <td className="py-1.5 px-3 text-right font-mono font-normal text-slate-705">
-                                {p.quantity}
+                                {p.type === 'servico' ? (
+                                  <span className="bg-slate-100 text-slate-600 border border-slate-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">N/A</span>
+                                ) : (
+                                  p.quantity
+                                )}
                               </td>
                               <td className="py-1 px-3 text-center">
                                 <form 
@@ -2546,23 +2605,30 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                               const isZero = p.quantity === 0;
                               const isLow = p.quantity > 0 && p.quantity <= p.minStock;
                               let stockBadge = <span className="bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded text-[10px]">Normal</span>;
-                              if (isZero) {
+                              
+                              if (p.type === 'servico') {
+                                stockBadge = <span className="bg-slate-100 text-slate-600 border border-slate-300 font-semibold px-2 py-0.5 rounded text-[10px]">Não Aplicável</span>;
+                              } else if (isZero) {
                                 stockBadge = <span className="bg-red-200 text-red-900 border border-red-300 font-bold px-2 py-0.5 rounded text-[10px]">Esgotado</span>;
                               } else if (isLow) {
                                 stockBadge = <span className="bg-amber-100 text-amber-800 border border-amber-300 font-semibold px-2 py-0.5 rounded text-[10px]">Baixo</span>;
                               }
                               
-                              const totalVal = p.quantity * p.costPrice;
+                              const totalVal = p.type === 'servico' ? 0 : p.quantity * p.costPrice;
 
                               return (
                                 <tr key={p.id} className="hover:bg-slate-50 border-b border-slate-150">
                                   <td className="py-2 px-2 font-mono text-slate-700 text-left font-bold">{p.code}</td>
                                   <td className="py-2 px-2 text-slate-900 text-left font-bold whitespace-nowrap">{p.name}</td>
                                   <td className="py-2 px-2 text-slate-650 text-left whitespace-nowrap">{p.category}</td>
-                                  <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{p.quantity}</td>
-                                  <td className="py-2 px-2 text-right font-mono">{p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn</td>
+                                  <td className="py-2 px-2 text-right font-mono whitespace-nowrap">
+                                    {p.type === 'servico' ? 'N/A' : p.quantity}
+                                  </td>
+                                  <td className="py-2 px-2 text-right font-mono">
+                                    {p.type === 'servico' ? 'N/A' : `${p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn`}
+                                  </td>
                                   <td className="py-2 px-2 text-right font-mono font-bold text-slate-800">
-                                    {totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
+                                    {p.type === 'servico' ? 'N/A' : `${totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn`}
                                   </td>
                                   <td className="py-2 px-2 text-center">{stockBadge}</td>
                                 </tr>
@@ -3304,6 +3370,39 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 </div>
               )}
 
+              {/* Seletor do Tipo do Item: Produto Físico vs Serviço/Taxa */}
+              <div className="space-y-1 bg-slate-50 border border-slate-200 p-2.5 rounded">
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                  Tipo do Lançamento <span className="text-red-500">*</span>
+                </label>
+                <div className="flex items-center gap-6 mt-1">
+                  <label className="flex items-center gap-1.5 cursor-pointer font-bold select-none text-slate-800">
+                    <input
+                      type="radio"
+                      name="productType"
+                      value="produto"
+                      checked={productType === 'produto'}
+                      onChange={() => setProductType('produto')}
+                      disabled={formMode === 'COMPRA_RECORRENTE'}
+                      className="cursor-pointer"
+                    />
+                    <span>📦 Produto Físico</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer font-bold select-none text-slate-800">
+                    <input
+                      type="radio"
+                      name="productType"
+                      value="servico"
+                      checked={productType === 'servico'}
+                      onChange={() => setProductType('servico')}
+                      disabled={formMode === 'COMPRA_RECORRENTE'}
+                      className="cursor-pointer"
+                    />
+                    <span>🎟️ Serviço / Taxa Paroquial</span>
+                  </label>
+                </div>
+              </div>
+
               {/* Campo 1: Código de Barras / SKU */}
               <div className="space-y-1">
                 <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
@@ -3358,74 +3457,99 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 </select>
               </div>
 
-              {/* Row for quantities and min stock */}
-              <div className="grid grid-cols-2 gap-4">
-                
-                {/* Campo 4: Quantidade Comprada */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
-                    {formMode === 'COMPRA_RECORRENTE' ? 'Qtd Comprada (+)' : 'Quantidade de Estoque'} <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono font-bold focus:outline-none focus:bg-white focus:border-blue-750"
-                    value={purchaseQuantity}
-                    onChange={(e) => setPurchaseQuantity(Number(e.target.value))}
-                    required
-                  />
-                </div>
+              {productType === 'produto' && (
+                <>
+                  {/* Row for quantities and min stock */}
+                  <div className="grid grid-cols-2 gap-4">
+                    
+                    {/* Campo 4: Quantidade Comprada */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                        {formMode === 'COMPRA_RECORRENTE' ? 'Qtd Comprada (+)' : 'Quantidade de Estoque'} <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono font-bold focus:outline-none focus:bg-white focus:border-blue-750"
+                        value={purchaseQuantity}
+                        onChange={(e) => setPurchaseQuantity(Number(e.target.value))}
+                        required
+                      />
+                    </div>
 
-                {/* Campo 5: Estoque Mínimo (Alerta) */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
-                    Estoque Mínimo <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono focus:outline-none focus:bg-white focus:border-blue-750"
-                    value={purchaseMinStock}
-                    onChange={(e) => setPurchaseMinStock(Number(e.target.value))}
-                    disabled={formMode === 'COMPRA_RECORRENTE'}
-                    required
-                  />
-                </div>
+                    {/* Campo 5: Estoque Mínimo (Alerta) */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                        Estoque Mínimo <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono focus:outline-none focus:bg-white focus:border-blue-750"
+                        value={purchaseMinStock}
+                        onChange={(e) => setPurchaseMinStock(Number(e.target.value))}
+                        disabled={formMode === 'COMPRA_RECORRENTE'}
+                        required
+                      />
+                    </div>
 
-              </div>
+                  </div>
 
-              {/* Row for prices and date */}
-              <div className="grid grid-cols-2 gap-4">
-                
-                {/* Campo 6: Preço de Custo (Unitário) */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
-                    Custo Unitário (R$) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono font-bold focus:outline-none focus:bg-white focus:border-blue-750"
-                    placeholder="5,50"
-                    value={costPrice}
-                    onChange={(e) => setCostPrice(Number(e.target.value.toString().replace(',', '.')))}
-                    required
-                  />
-                </div>
+                  {/* Row for prices and date */}
+                  <div className="grid grid-cols-2 gap-4">
+                    
+                    {/* Campo 6: Preço de Custo (Unitário) */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                        Custo Unitário (MTn) <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono font-bold focus:outline-none focus:bg-white focus:border-blue-750"
+                        placeholder="5,50"
+                        value={costPrice}
+                        onChange={(e) => setCostPrice(Number(e.target.value.toString().replace(',', '.')))}
+                        required
+                      />
+                    </div>
 
-                {/* Campo 7: Data da Compra */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
-                    Data de Compra
-                  </label>
-                  <input
-                    type="date"
-                    className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono focus:outline-none focus:bg-white focus:border-blue-750"
-                    value={purchaseDate}
-                    onChange={(e) => setPurchaseDate(e.target.value)}
-                    required
-                  />
-                </div>
+                    {/* Campo 7: Data da Compra */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                        Data de Compra
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono focus:outline-none focus:bg-white focus:border-blue-750"
+                        value={purchaseDate}
+                        onChange={(e) => setPurchaseDate(e.target.value)}
+                        required
+                      />
+                    </div>
 
+                  </div>
+                </>
+              )}
+
+              {/* Campo: Preço de Venda / Regulamento / Taxa */}
+              <div className="space-y-1">
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                  {productType === 'servico' ? 'Valor da Taxa / Preço de Venda (MTn)' : 'Preço de Venda (MTn)'} {productType === 'servico' && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded text-slate-850 font-mono font-bold focus:outline-none focus:bg-white focus:border-blue-750"
+                  placeholder={productType === 'servico' ? "Valor obrigatório (ex: 150,00)" : "Opcional - Deixe vazio se não precificado"}
+                  value={modalSalePrice}
+                  onChange={(e) => setModalSalePrice(e.target.value)}
+                  required={productType === 'servico'}
+                />
+                <span className="text-[10px] text-slate-500 block">
+                  {productType === 'servico' 
+                    ? "💡 Serviços e taxas devem ter obrigatoriamente um preço fixado para podermos emitir o recibo na Frente de Caixa."
+                    : "💡 Se deixar vazio (ou 'Não precificado'), o produto físico não integrará o catálogo de vendas até ser precificado."
+                  }
+                </span>
               </div>
 
               {/* Helper read only feedback to show selling price */}
@@ -3434,7 +3558,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                   <span className="text-[10px] text-slate-500 font-mono block">Preço de Venda Definido:</span>
                   <strong className="text-slate-800 text-xs font-mono">
                     {existingSalePrice 
-                      ? `R$ ${existingSalePrice.toFixed(2)}`
+                      ? `${existingSalePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn`
                       : 'Sem preço cadastrado (Venda Bloqueada!)'
                     }
                   </strong>
@@ -3473,10 +3597,24 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
                 <button
                   type="submit"
-                  className="w-1/3 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded transition shadow flex items-center justify-center gap-1"
+                  disabled={isSaving}
+                  className={`w-1/3 py-2 text-xs font-bold text-white rounded transition shadow flex items-center justify-center gap-1 ${
+                    isSaving 
+                      ? 'bg-blue-400 opacity-60 cursor-not-allowed' 
+                      : 'bg-blue-700 hover:bg-blue-800'
+                  }`}
                 >
-                  <Check size={12} />
-                  <span>Salvar</span>
+                  {isSaving ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin inline-block shrink-0"></span>
+                      <span>Salvando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={12} />
+                      <span>Salvar</span>
+                    </>
+                  )}
                 </button>
               </div>
 

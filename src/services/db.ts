@@ -207,6 +207,39 @@ export const dbService = {
     let actionType = 'CADASTRO_PRODUTO';
     let details = `Lançamento/atualização do produto "${product.name}"`;
 
+    if (!product.type) {
+      product.type = 'produto';
+    }
+
+    // Ensure state schema alignment: salePrice can be a number >= 0 or null, but never undefined
+    if (product.salePrice === undefined || product.salePrice === null || isNaN(product.salePrice)) {
+      product.salePrice = null;
+    } else {
+      product.salePrice = Number(product.salePrice);
+    }
+
+    // Always keep LocalStorage in sync to prevent resurrection of deleted items or dual-mode discrepancy
+    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    const index = products.findIndex((p: any) => p.id === product.id);
+    if (index >= 0) {
+      const prev = products[index];
+      product.updatedAt = dateStr;
+      product.createdAt = prev.createdAt || dateStr;
+      if (prev.quantity !== product.quantity) {
+        actionType = 'ESTOQUE_AJUSTADO';
+        details = `Ajuste de estoque do produto "${product.name}": de ${prev.quantity} para ${product.quantity}`;
+      } else if (prev.salePrice !== product.salePrice) {
+        actionType = 'PRECO_ATRIBUIDO';
+        details = `Ajuste de preço de venda de "${product.name}": de MTn ${prev.salePrice?.toFixed(2) || '0,00'} para MTn ${product.salePrice?.toFixed(2) || '0,00'}`;
+      }
+      products[index] = product;
+    } else {
+      product.createdAt = dateStr;
+      product.updatedAt = dateStr;
+      products.push(product);
+    }
+    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+
     if (db) {
       try {
         await ensureAuthReady();
@@ -248,32 +281,21 @@ export const dbService = {
       }
     }
 
-    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
-    const index = products.findIndex((p: any) => p.id === product.id);
-    if (index >= 0) {
-      const prev = products[index];
-      product.updatedAt = dateStr;
-      product.createdAt = prev.createdAt;
-      if (prev.quantity !== product.quantity) {
-        actionType = 'ESTOQUE_AJUSTADO';
-        details = `Ajuste de estoque do produto "${product.name}": de ${prev.quantity} para ${product.quantity}`;
-      } else if (prev.salePrice !== product.salePrice) {
-        actionType = 'PRECO_ATRIBUIDO';
-        details = `Ajuste de preço de venda de "${product.name}": de MTn ${prev.salePrice?.toFixed(2) || '0,00'} para MTn ${product.salePrice?.toFixed(2) || '0,00'}`;
-      }
-      products[index] = product;
-    } else {
-      product.createdAt = dateStr;
-      product.updatedAt = dateStr;
-      products.push(product);
-    }
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
     await this.log(userId, userName, actionType, details);
   },
 
   async deleteProduct(productId: string, userId: string, userName: string): Promise<void> {
     const timestamp = new Date().toISOString();
     let name = '';
+
+    // Always keep Local Storage in sync as well
+    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    const item = products.find((p: any) => p.id === productId);
+    if (item) {
+      name = item.name;
+      const filtered = products.filter((p: any) => p.id !== productId);
+      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(filtered));
+    }
 
     if (db) {
       try {
@@ -301,12 +323,9 @@ export const dbService = {
       }
     }
 
-    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
-    const item = products.find((p: any) => p.id === productId);
-    if (!item) return;
-    const filtered = products.filter((p: any) => p.id !== productId);
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(filtered));
-    await this.log(userId, userName, 'EXCLUSAO_PRODUTO', `Produto "${item.name}" excluído.`);
+    if (item) {
+      await this.log(userId, userName, 'EXCLUSAO_PRODUTO', `Produto "${name}" excluído.`);
+    }
   },
 
   // SALES
@@ -367,11 +386,13 @@ export const dbService = {
         if (!prod.salePrice) {
           return { success: false, message: 'Este produto não possui preço de venda definido e não pode ser comercializado.' };
         }
-        if (prod.quantity < quantity) {
-          return { success: false, message: `Quantidade solicitada (${quantity}) excede o saldo de estoque atual (${prod.quantity}).` };
+        if (prod.type !== 'servico') {
+          if (prod.quantity < quantity) {
+            return { success: false, message: `Quantidade solicitada (${quantity}) excede o saldo de estoque atual (${prod.quantity}).` };
+          }
+          prod.quantity -= quantity;
         }
 
-        prod.quantity -= quantity;
         prod.updatedAt = timestamp;
 
         const batch = writeBatch(db);
@@ -421,11 +442,13 @@ export const dbService = {
     if (!product.salePrice) {
       return { success: false, message: 'Este produto não possui preço de venda definido e não pode ser comercializado.' };
     }
-    if (product.quantity < quantity) {
-      return { success: false, message: `Quantidade solicitada (${quantity}) excede o saldo de estoque atual (${product.quantity}).` };
+    if (product.type !== 'servico') {
+      if (product.quantity < quantity) {
+        return { success: false, message: `Quantidade solicitada (${quantity}) excede o saldo de estoque atual (${product.quantity}).` };
+      }
+      product.quantity -= quantity;
     }
     
-    product.quantity -= quantity;
     product.updatedAt = timestamp;
     products[productIndex] = product;
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
@@ -489,11 +512,13 @@ export const dbService = {
           if (!prod.salePrice || prod.salePrice <= 0) {
             return { success: false, message: `O produto "${prod.name}" não possui preço de venda válido.` };
           }
-          if (prod.quantity < item.quantity) {
-            return { success: false, message: `Estoque insuficiente para "${prod.name}": solicitado ${item.quantity}, disponível ${prod.quantity}.` };
+          if (prod.type !== 'servico') {
+            if (prod.quantity < item.quantity) {
+              return { success: false, message: `Estoque insuficiente para "${prod.name}": solicitado ${item.quantity}, disponível ${prod.quantity}.` };
+            }
+            prod.quantity -= item.quantity;
           }
 
-          prod.quantity -= item.quantity;
           prod.updatedAt = timestamp;
           prods.push(prod);
 
@@ -562,8 +587,10 @@ export const dbService = {
       if (!prod.salePrice || prod.salePrice <= 0) {
         return { success: false, message: `O produto "${prod.name}" não possui preço de venda válido.` };
       }
-      if (prod.quantity < item.quantity) {
-        return { success: false, message: `Estoque insuficiente para "${prod.name}": solicitado ${item.quantity}, disponível ${prod.quantity}.` };
+      if (prod.type !== 'servico') {
+        if (prod.quantity < item.quantity) {
+          return { success: false, message: `Estoque insuficiente para "${prod.name}": solicitado ${item.quantity}, disponível ${prod.quantity}.` };
+        }
       }
     }
 
@@ -571,7 +598,9 @@ export const dbService = {
       const prodIndex = products.findIndex((p: any) => p.id === item.productId);
       const prod = products[prodIndex];
 
-      prod.quantity -= item.quantity;
+      if (prod.type !== 'servico') {
+        prod.quantity -= item.quantity;
+      }
       prod.updatedAt = timestamp;
       products[prodIndex] = prod;
 
@@ -787,6 +816,18 @@ export const dbService = {
     localStorage.removeItem(STORAGE_KEYS.SALES);
     localStorage.removeItem(STORAGE_KEYS.PURCHASES);
     localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_SESSION);
+    localStorage.removeItem('stock_parocos_sys_seeded');
+
+    if (db) {
+      try {
+        await ensureAuthReady();
+        const { deleteDoc } = await import('firebase/firestore');
+        await deleteDoc(doc(db, 'system_config', 'seeding'));
+      } catch (e) {
+        console.warn("Could not delete seeding marker in Firestore:", e);
+      }
+    }
+
     await this.initialize();
   },
 };

@@ -190,12 +190,37 @@ export async function seedDatabaseIfEmpty(onProgress?: (msg: string) => void): P
     }
 
     onProgress?.("Verificando integridade das coleções no Firestore...");
+    
+    // Check locally first for fast bypass response
+    if (localStorage.getItem('stock_parocos_sys_seeded') === 'true') {
+      console.log("Sistema já sincronizou semente inicialmente. Ignorando seeding.");
+      return { seeded: false };
+    }
+
+    const seedDocRef = doc(db, 'system_config', 'seeding');
+    let hasSeededMarker = false;
+    try {
+      const seedDocSnap = await getDocFromServer(seedDocRef);
+      if (seedDocSnap.exists() && (seedDocSnap.data() as any)?.seeded) {
+        hasSeededMarker = true;
+      }
+    } catch (e) {
+      console.warn("Erro ao ler marcador de semente do Cloud Firestore, verificando coleções:", e);
+    }
+
+    if (hasSeededMarker) {
+      console.log("Base de dados paroquial já semeada anteriormente. Carga automática pulada.");
+      localStorage.setItem('stock_parocos_sys_seeded', 'true');
+      return { seeded: false };
+    }
+
     const productsRef = collection(db, 'products');
     const q = query(productsRef, limit(1));
     const snapshot = await getDocs(q);
 
     if (!snapshot.empty) {
       console.log("Firebase Firestore já contém produtos cadastrados. Carga inicial ignorada.");
+      localStorage.setItem('stock_parocos_sys_seeded', 'true');
       return { seeded: false };
     }
 
@@ -214,9 +239,13 @@ export async function seedDatabaseIfEmpty(onProgress?: (msg: string) => void): P
       batch.set(prodDocRef, p);
     }
 
+    // 3. Mark the database as seeded to allow complete user wipe outs
+    batch.set(seedDocRef, { seeded: true, timestamp: new Date().toISOString() });
+
     onProgress?.("Gravando e aplicando documentos sincronizados no Firestore...");
     await batch.commit();
 
+    localStorage.setItem('stock_parocos_sys_seeded', 'true');
     console.log("Base de dados paroquial sincronizada com o Cloud Firestore com sucesso.");
     onProgress?.("Sincronização paroquial concluída!");
     return { seeded: true };

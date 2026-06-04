@@ -29,8 +29,9 @@ export interface Product {
   category: string;
   quantity: number; // current inventory status
   costPrice: number; // cost/purchase price
-  salePrice?: number; // active selling price (required for sale)
+  salePrice?: number | null; // active selling price (required for sale)
   minStock: number; // alert threshhold
+  type: 'produto' | 'servico';
   createdAt: string;
   updatedAt: string;
 }
