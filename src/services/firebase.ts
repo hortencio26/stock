@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, collection, getDocs, limit, query, writeBatch } from 'firebase/firestore';
+import { initializeFirestore, memoryLocalCache, doc, getDocFromServer, collection, getDocs, limit, query, writeBatch } from 'firebase/firestore';
 import { INITIAL_USERS, INITIAL_PRODUCTS } from './initialData';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
@@ -20,7 +20,12 @@ const firebaseConfig = {
 // Initialize Firebase App securely (avoiding duplicate instances in hot-reloading)
 export const app = firebaseConfig.apiKey ? (getApps().length === 0 ? initializeApp(firebaseConfig) : getApp()) : null;
 
-export const db = app ? getFirestore(app, firebaseConfig.firestoreDatabaseId) : null;
+export const db = app ? (
+  firebaseConfig.firestoreDatabaseId 
+    ? initializeFirestore(app, { localCache: memoryLocalCache() }, firebaseConfig.firestoreDatabaseId)
+    : initializeFirestore(app, { localCache: memoryLocalCache() })
+) : null;
+
 export const auth = app ? getAuth(app) : null;
 
 // Operational and robust Error handling system conformant to the Firebase Skill guidelines

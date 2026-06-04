@@ -615,15 +615,27 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   };
 
   // Reset form inputs
-  const handleClearForm = () => {
+  const handleClearForm = async () => {
     setFormMode('NOVO');
     setSelectedProductId('');
     
-    // Gera código sequencial automático e exclusivo de 6 algarismos
-    const allProds = products;
+    // Gera código sequencial automático e exclusivo de 6 algarismos direto da nuvem (ou cache se offline)
+    let allProds: Product[] = [];
+    try {
+      allProds = await dbService.getProducts();
+    } catch (err) {
+      console.warn("Erro ao buscar produtos para gerar código sequencial:", err);
+      allProds = products;
+    }
+
     let candidate = 100001;
-    while (allProds.some(p => p.code.trim() === String(candidate))) {
-      candidate++;
+    if (allProds && allProds.length > 0) {
+      while (allProds.some(p => p.code.trim() === String(candidate))) {
+        candidate++;
+      }
+    } else {
+      // Se o banco retornar vazio (nuvem vazia), reinicia o SKU de forma limpa em 100001
+      candidate = 100001;
     }
     setProductCode(String(candidate));
     
@@ -712,9 +724,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
       );
 
       triggerStatus('success', `Lote inicial de "${productName}" comprado e inserido com sucesso!`);
-      handleClearForm();
-      setIsProductModalOpen(false);
       await loadData();
+      await handleClearForm();
+      setIsProductModalOpen(false);
     } 
     else if (formMode === 'COMPRA_RECORRENTE') {
       // Look up target product
@@ -755,9 +767,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
       );
 
       triggerStatus('success', `Entrada de estoque de +${purchaseQuantity}x "${target.name}" registrada com sucesso!`);
-      handleClearForm();
-      setIsProductModalOpen(false);
       await loadData();
+      await handleClearForm();
+      setIsProductModalOpen(false);
     }
     else if (formMode === 'EDITAR') {
       const target = allProducts.find(p => p.id === selectedProductId);
@@ -779,9 +791,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
       await dbService.saveProduct(finalProduct, currentUser.id, currentUser.name);
       triggerStatus('success', `Informações do produto "${productName}" atualizadas com sucesso!`);
-      handleClearForm();
-      setIsProductModalOpen(false);
       await loadData();
+      await handleClearForm();
+      setIsProductModalOpen(false);
     }
   };
 
@@ -803,9 +815,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
     if (confirm(`EXCLUSÃO PERMANENTE:\nVocê tem certeza que deseja excluir o produto "${currentProd.name}" do estoque? Isto não poderá ser desfeito.`)) {
       await dbService.deleteProduct(selectedProductId, currentUser.id, currentUser.name);
       triggerStatus('success', `Produto "${currentProd.name}" excluído do estoque paroquial.`);
-      handleClearForm();
-      setIsProductModalOpen(false);
       await loadData();
+      await handleClearForm();
+      setIsProductModalOpen(false);
     }
   };
 
