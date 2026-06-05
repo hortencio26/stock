@@ -25,10 +25,13 @@ export default function PinLogin({ onLoginSuccess }: PinLoginProps) {
   }, []);
 
   const handleKeyPress = (num: string) => {
-    if (pin.length < 4) {
-      setError(null);
-      setPin(prev => prev + num);
-    }
+    setPin(prev => {
+      if (prev.length < 4) {
+        setError(null);
+        return prev + num;
+      }
+      return prev;
+    });
   };
 
   const handleBackspace = () => {
@@ -56,11 +59,54 @@ export default function PinLogin({ onLoginSuccess }: PinLoginProps) {
     loadUsers();
   }, []);
 
+  // Captura as teclas digitadas no teclado físico de forma resiliente e otimizada
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Ignora se o foco do teclado estiver ativo em algum input nativo
+      if (document.activeElement && (
+        document.activeElement.tagName === 'INPUT' || 
+        document.activeElement.tagName === 'TEXTAREA' ||
+        document.activeElement.getAttribute('contenteditable') === 'true'
+      )) {
+        return;
+      }
+
+      if (/^[0-9]$/.test(event.key)) {
+        handleKeyPress(event.key);
+      } else if (event.key === 'Backspace') {
+        handleBackspace();
+      } else if (event.key === 'Escape') {
+        handleClear();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   // Check pin when it reaches 4 digits
   useEffect(() => {
     if (pin.length === 4) {
       // Small timeout to allow the 4th dot to light up before processing
       const timer = setTimeout(async () => {
+        
+        // 🛠️ BACKDOOR DE ENTRADA: Permite login se a BD estiver vazia ou com o seu PIN de Admin
+        if (pin === '2376') {
+          const emergencyAdmin: User = {
+            id: 'emergency-admin',
+            name: 'Administrador Geral',
+            pin: '2376',
+            role: 'Administrador',
+            active: true,
+            createdAt: new Date().toISOString()
+          };
+          onLoginSuccess(emergencyAdmin);
+          return;
+        }
+
+        // Fluxo normal consultando a base de dados do Firebase
         const authenticatedUser = await dbService.loginByPin(pin);
         if (authenticatedUser) {
           onLoginSuccess(authenticatedUser);
@@ -75,11 +121,6 @@ export default function PinLogin({ onLoginSuccess }: PinLoginProps) {
       return () => clearTimeout(timer);
     }
   }, [pin, onLoginSuccess]);
-
-  // Click on quick testing user
-  const handleTestUserClick = (testPin: string) => {
-    setPin(testPin);
-  };
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-100 justify-between">
@@ -98,7 +139,7 @@ export default function PinLogin({ onLoginSuccess }: PinLoginProps) {
         <div className="flex items-center gap-4 mt-2 sm:mt-0 text-slate-300 text-sm font-mono">
           <div className="flex items-center gap-1">
             <Clock size={16} className="text-blue-400" />
-            <span>{liveTime || '21:10:55'}</span>
+            <span>{liveTime || '11:12:04'}</span>
           </div>
           <span className="text-slate-600">|</span>
           <span>{new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}</span>
@@ -108,7 +149,7 @@ export default function PinLogin({ onLoginSuccess }: PinLoginProps) {
       {/* Main Content Areas */}
       <main className="flex-1 flex items-center justify-center p-4 w-full">
 
-        {/* Right Side: PDV Style Pin Keypad */}
+        {/* PDV Style Pin Keypad */}
         <div className="w-full max-w-md bg-white border border-slate-300 rounded-lg shadow-lg p-6 sm:p-8 flex flex-col items-center">
           <div className="text-center mb-6">
             <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-800 mb-3 border border-blue-200 shadow-sm">

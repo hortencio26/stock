@@ -6,13 +6,7 @@ import firebaseConfigJson from '../../firebase-applet-config.json';
 
 const metaEnv = (import.meta as any).env || {};
 
-const isAiStudio = typeof window !== 'undefined' && (
-  window.location.hostname.includes('.run.app') || 
-  window.location.hostname.includes('localhost') || 
-  window.location.hostname.includes('127.0.0.1')
-);
-
-const firebaseConfig = isAiStudio && firebaseConfigJson?.apiKey ? {
+const firebaseConfig = firebaseConfigJson?.apiKey ? {
   apiKey: firebaseConfigJson.apiKey,
   authDomain: firebaseConfigJson.authDomain,
   projectId: firebaseConfigJson.projectId,
@@ -21,13 +15,13 @@ const firebaseConfig = isAiStudio && firebaseConfigJson?.apiKey ? {
   appId: firebaseConfigJson.appId,
   firestoreDatabaseId: firebaseConfigJson.firestoreDatabaseId || ""
 } : {
-  apiKey: metaEnv.VITE_FIREBASE_API_KEY || "AIzaSyA_HdpyD-PI_sL22blcMR_BYTmez6yafpo",
-  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || "stock-9c37b.firebaseapp.com",
-  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || "stock-9c37b",
-  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || "stock-9c37b.firebasestorage.app",
-  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "238087820840",
-  appId: metaEnv.VITE_FIREBASE_APP_ID || "1:238087820840:web:6b65819a2558a6127f071d",
-  firestoreDatabaseId: (firebaseConfigJson as any).firestoreDatabaseId || ""
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY || "",
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: metaEnv.VITE_FIREBASE_APP_ID || "",
+  firestoreDatabaseId: ""
 };
 
 // Initialize Firebase App
