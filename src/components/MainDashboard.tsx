@@ -1590,9 +1590,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
               </div>
 
               {/* Alternating row thin-border Excel table with independent horizontal overflow and global sticky top-header relative to the viewport */}
-              <div className="overflow-x-auto border border-slate-300 rounded shadow-sm bg-white">
+              <div className="overflow-auto max-h-[500px] border border-slate-300 rounded shadow-sm bg-white">
                 <table className="excel-grid min-w-full font-sans text-xs">
-                  <thead className="bg-slate-100 z-10 shadow-sm">
+                  <thead className="sticky top-0 z-10 bg-slate-100 shadow-[0_1px_0_0_rgba(0,0,0,0.1)]">
                     <tr>
                       <th className="py-1.5 px-3 text-left w-24">CÓDIGO</th>
                       <th className="py-1.5 px-3 text-left">DESCRIÇÃO DO PRODUTO</th>
