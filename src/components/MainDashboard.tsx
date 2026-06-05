@@ -257,26 +257,40 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
     const saved = localStorage.getItem('stock_parocos_categories');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return [...parsed].sort((a, b) => a.localeCompare(b));
+        }
       } catch (e) {
-        return DEFAULT_CATEGORIES;
+        // Fall back
       }
     }
-    return DEFAULT_CATEGORIES;
+    return [...DEFAULT_CATEGORIES].sort((a, b) => a.localeCompare(b));
   });
   const [newCategoryName, setNewCategoryName] = useState('');
   const [editingCategoryIndex, setEditingCategoryIndex] = useState<number | null>(null);
   const [editingCategoryValue, setEditingCategoryValue] = useState('');
 
   const saveCategories = (newCats: string[]) => {
-    setCategories(newCats);
-    localStorage.setItem('stock_parocos_categories', JSON.stringify(newCats));
+    const seen = new Set<string>();
+    const uniqueList: string[] = [];
+    for (const cat of newCats) {
+      if (!cat || !cat.trim()) continue;
+      const lower = cat.toLowerCase().trim();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        uniqueList.push(cat.trim());
+      }
+    }
+    const sorted = uniqueList.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+    setCategories(sorted);
+    localStorage.setItem('stock_parocos_categories', JSON.stringify(sorted));
   };
 
   const handleRenameCategory = async (oldName: string, newName: string) => {
     if (!newName.trim() || oldName === newName) return;
     const trimmed = newName.trim();
-    if (categories.some(c => c.toLowerCase() === trimmed.toLowerCase())) {
+    if (categories.some(c => c.toLowerCase() === trimmed.toLowerCase() && c.toLowerCase() !== oldName.toLowerCase())) {
       triggerStatus('error', 'Uma categoria com este nome já existe.');
       return;
     }
@@ -478,6 +492,49 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
     try {
       const loadedProds = await dbService.getProducts();
       setProducts(loadedProds);
+
+      // Extração dinâmica e mesclagem de categorias para garantir que nenhuma categoria em uso seja perdida
+      const productCategories = loadedProds.map(p => p.category).filter(Boolean);
+
+      setCategories(prev => {
+        let currentSaved: string[] = [];
+        const saved = localStorage.getItem('stock_parocos_categories');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed)) {
+              currentSaved = parsed;
+            }
+          } catch {}
+        }
+
+        const mergedSet = new Set<string>();
+        // 1. Adicionar categorias padrão
+        DEFAULT_CATEGORIES.forEach(c => mergedSet.add(c.trim()));
+        // 2. Adicionar categorias conhecidas no estado anterior de React (para não perder as recém adicionadas)
+        prev.forEach(c => mergedSet.add(c.trim()));
+        // 3. Adicionar categorias persistidas no localStorage
+        currentSaved.forEach(c => mergedSet.add(c.trim()));
+        // 4. Adicionar categorias que estão associadas aos produtos ativos vindos do banco Firestore
+        productCategories.forEach(c => mergedSet.add(c.trim()));
+
+        // Criar lista única sem duplicados de forma insensível a maiúsculas/minúsculas
+        const seen = new Set<string>();
+        const uniqueList: string[] = [];
+        for (const cat of Array.from(mergedSet).filter(Boolean)) {
+          const lower = cat.toLowerCase().trim();
+          if (!seen.has(lower)) {
+            seen.add(lower);
+            uniqueList.push(cat.trim());
+          }
+        }
+
+        // Ordenar as categorias em ordem alfabética (respeitando acentos em Português)
+        const sorted = uniqueList.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+        localStorage.setItem('stock_parocos_categories', JSON.stringify(sorted));
+        return sorted;
+      });
+
       const [usrList, saleList, logs, custs, purchList] = await Promise.all([
         dbService.getUsers(),
         dbService.getSales(),
@@ -1277,8 +1334,8 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   return (
     <div className="flex flex-col min-h-screen bg-slate-100">
       
-      {/* AREA CONGELADA / STICKY HEADER AND NAVIGATION ZONE */}
-      <div className="sticky top-0 z-40 bg-slate-100 print-hide shadow-md">
+      {/* AREA CONGELADA / MAIN HEADER AND NAVIGATION ZONE */}
+      <div className="sticky top-0 z-40 bg-slate-100 print-hide border-b border-slate-200 shadow-md">
         {/* 1. TOP TITLE BAR - Windows Modern WPF/Classic Identity */}
         <header className="bg-slate-900 text-slate-100 px-6 py-4 flex flex-col md:flex-row justify-between items-center border-b-4 border-blue-700 shadow-sm">
           <div className="flex items-center gap-3">
@@ -1453,13 +1510,24 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
         
         {/* Interactive Alerts Bar */}
         {statusMessage && (
-          <div className={`p-3 rounded border text-xs flex items-center gap-2 shadow-sm animate-pulse print-hide ${
-            statusMessage.type === 'success' 
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
-              : 'bg-red-50 border-red-200 text-red-800'
-          }`}>
-            {statusMessage.type === 'success' ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
-            <span className="font-mono">{statusMessage.text}</span>
+          <div 
+            className={`fixed top-5 left-1/2 -translate-x-1/2 p-3.5 rounded-lg border text-xs flex items-center gap-2.5 shadow-2xl animate-pulse print-hide max-w-md w-[90%] sm:w-auto ${
+              statusMessage.type === 'success' 
+                ? 'bg-emerald-800 border-emerald-650 text-emerald-50' 
+                : 'bg-red-800 border-red-650 text-red-50'
+            }`}
+            style={{ minWidth: '320px', zIndex: 99999 }}
+          >
+            {statusMessage.type === 'success' ? <CheckCircle size={16} className="shrink-0 text-emerald-200" /> : <AlertCircle size={16} className="shrink-0 text-red-200" />}
+            <span className="font-sans font-semibold leading-relaxed flex-1">{statusMessage.text}</span>
+            <button 
+              type="button"
+              onClick={() => setStatusMessage(null)}
+              className="text-white hover:text-slate-200 ml-2 font-bold font-mono text-xs focus:outline-none"
+              title="Fechar"
+            >
+              ✕
+            </button>
           </div>
         )}
 
@@ -1471,7 +1539,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
             <div className="space-y-4 w-full">
               
               {/* Filter bar with Quick Action button */}
-              <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center bg-slate-100 p-3 rounded border border-slate-300 shadow-sm print-hide">
+              <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center bg-slate-100 p-3 rounded border border-slate-300 shadow-sm print-hide mb-2">
                 <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs font-bold text-slate-750">FILTRAR STOCK:</span>
@@ -1521,10 +1589,10 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 </span>
               </div>
 
-              {/* Alternating row thin-border Excel table with independent overflow and sticky top-header */}
-              <div className="overflow-x-auto border border-slate-300 rounded shadow-sm max-h-[500px] overflow-y-auto">
+              {/* Alternating row thin-border Excel table with independent horizontal overflow and global sticky top-header relative to the viewport */}
+              <div className="overflow-x-auto border border-slate-300 rounded shadow-sm bg-white">
                 <table className="excel-grid min-w-full font-sans text-xs">
-                  <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
+                  <thead className="bg-slate-100 z-10 shadow-sm">
                     <tr>
                       <th className="py-1.5 px-3 text-left w-24">CÓDIGO</th>
                       <th className="py-1.5 px-3 text-left">DESCRIÇÃO DO PRODUTO</th>
@@ -1689,9 +1757,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 }
 
                 return (
-                  <div className="overflow-x-auto border border-slate-300 rounded shadow-inner max-h-[500px] overflow-y-auto bg-white">
+                  <div className="overflow-x-auto border border-slate-300 rounded shadow-inner bg-white">
                     <table className="excel-grid min-w-full font-sans text-xs">
-                      <thead>
+                      <thead className="bg-slate-100 z-10 shadow-sm">
                         <tr className="bg-slate-100 font-mono">
                           <th className="py-1.5 px-3 text-left w-24">CÓDIGO (SKU)</th>
                           <th className="py-1.5 px-3 text-left">DESCRIÇÃO DO PRODUTO</th>
@@ -2168,10 +2236,10 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 </div>
               </div>
 
-              {/* Loop over liturgical categories and render spreadsheet table */}
-              <div className="overflow-x-auto border border-slate-300 rounded shadow-md max-h-[450px] overflow-y-auto">
+              {/* Loop over liturgical categories and render spreadsheet table with viewport scrolling and sticky header */}
+              <div className="overflow-x-auto border border-slate-300 rounded shadow-md bg-white">
                 <table className="excel-grid min-w-full font-sans text-xs">
-                  <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
+                  <thead className="bg-slate-100 z-10 shadow-sm">
                     <tr className="bg-slate-100 text-slate-800 border-b border-slate-300 font-mono">
                       <th className="py-2.5 px-3 text-left w-36 whitespace-nowrap">CATEGORIA LITÚRGICA</th>
                       <th className="py-2.5 px-3 text-left w-24 whitespace-nowrap">CÓDIGO (SKU)</th>
@@ -2840,9 +2908,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                   </button>
                 </div>
 
-                <div className="overflow-x-auto border border-slate-300 rounded shadow-md max-h-[350px] overflow-y-auto bg-white">
+                <div className="overflow-x-auto border border-slate-300 rounded shadow-md bg-white">
                   <table className="excel-grid min-w-full font-sans text-xs">
-                    <thead className="sticky top-0 bg-slate-100 z-10 font-mono shadow-inner">
+                    <thead className="bg-slate-100 z-10 font-mono shadow-inner">
                       <tr>
                         <th className="py-2 px-3 text-left w-36">AÇÃO REGISTRADA</th>
                         <th className="py-2 px-3 text-left w-48">USUÁRIO EMISSOR</th>
@@ -3650,8 +3718,19 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
               <form 
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (!newCategoryName.trim()) return;
+                  if (!newCategoryName.trim()) {
+                    triggerStatus('error', 'O nome da categoria não pode estar em branco.');
+                    return;
+                  }
                   const name = newCategoryName.trim();
+                  if (name.length < 2) {
+                    triggerStatus('error', 'O nome da categoria deve ter pelo menos 2 caracteres.');
+                    return;
+                  }
+                  if (name.length > 50) {
+                    triggerStatus('error', 'O nome da categoria não deve exceder 50 caracteres.');
+                    return;
+                  }
                   if (categories.some(c => c.toLowerCase() === name.toLowerCase())) {
                     triggerStatus('error', 'Uma categoria com este nome já existe.');
                     return;
@@ -3720,8 +3799,23 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (!editingCategoryValue.trim()) return;
+                                  if (!editingCategoryValue.trim()) {
+                                    triggerStatus('error', 'O nome da categoria não pode estar em branco.');
+                                    return;
+                                  }
                                   const newVal = editingCategoryValue.trim();
+                                  if (newVal.length < 2) {
+                                    triggerStatus('error', 'O nome da categoria deve ter pelo menos 2 caracteres.');
+                                    return;
+                                  }
+                                  if (newVal.length > 50) {
+                                    triggerStatus('error', 'O nome da categoria não deve exceder 50 caracteres.');
+                                    return;
+                                  }
+                                  if (categories.some(c => c.toLowerCase() === newVal.toLowerCase() && c.toLowerCase() !== cat.toLowerCase())) {
+                                    triggerStatus('error', 'Uma categoria com este nome já existe.');
+                                    return;
+                                  }
                                   if (newVal === cat) {
                                     setEditingCategoryIndex(null);
                                     return;

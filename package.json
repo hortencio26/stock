@@ -1,10 +1,39 @@
 {
-  "projectId": "grounded-gist-kf4nj",
-  "appId": "1:861388826139:web:65ceb92911e08a835fbabe",
-  "apiKey": "AIzaSyA9TLogXQIf2ftLb7lPng1IsPZq60i7pYc",
-  "authDomain": "grounded-gist-kf4nj.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-c99546be-eace-4579-b6ca-d13999652f57",
-  "storageBucket": "grounded-gist-kf4nj.firebasestorage.app",
-  "messagingSenderId": "861388826139",
-  "measurementId": ""
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "firebase": "^12.14.0",
+    "html2canvas": "^1.4.1",
+    "html2pdf.js": "^0.14.0",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  }
 }

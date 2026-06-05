@@ -1,165 +1,20 @@
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
 
-    // 1. Global safety net (Default Deny)
-    match /{document=**} {
-      allow read, write: if false;
-    }
+# Run and deploy your AI Studio app
 
-    // --- REUSABLE SAFETY PRIMITIVES ---
-    function isSignedIn() {
-      return true;
-    }
+This contains everything you need to run your app locally.
 
-    // Dynamic checks comparing custom auth or trusted admins list
-    function isAdmin() {
-      return true;
-    }
+View your app in AI Studio: https://ai.studio/apps/c99546be-eace-4579-b6ca-d13999652f57
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
+## Run Locally
 
-    // Standard getters
-    function incoming() {
-      return request.resource.data;
-    }
+**Prerequisites:**  Node.js
 
-    function existing() {
-      return resource.data;
-    }
 
-    // --- COLLECTION RULES / SCHEMA VALIDATORS ---
-
-    // A. Users collection
-    function isValidUser(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.name is string && data.name.size() <= 150
-        && data.pin is string && data.pin.size() <= 10
-        && data.role is string && (data.role == 'Administrador' || data.role == 'Operador')
-        && data.active is bool
-        && data.createdAt is string && data.createdAt.size() <= 50;
-    }
-
-    match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) && (isAdmin() || request.auth.uid == userId);
-      allow update: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) && (isAdmin() || request.auth.uid == userId);
-      allow delete: if isSignedIn() && isValidId(userId) && isAdmin();
-    }
-
-    // B. Products collection
-    function isValidProduct(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.code is string && data.code.size() <= 50
-        && data.name is string && data.name.size() <= 150
-        && data.category is string && data.category.size() <= 100
-        && data.quantity is number && data.quantity >= 0
-        && data.costPrice is number && data.costPrice >= 0
-        && (!('salePrice' in data) || data.salePrice == null || (data.salePrice is number && data.salePrice >= 0))
-        && data.minStock is number && data.minStock >= 0
-        && (!('type' in data) || (data.type == 'produto' || data.type == 'servico'))
-        && data.createdAt is string && data.createdAt.size() <= 50
-        && data.updatedAt is string && data.updatedAt.size() <= 50;
-    }
-
-    match /products/{productId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(productId) && isValidProduct(incoming());
-      allow update: if isSignedIn() && isValidId(productId) && isValidProduct(incoming()) && (
-        isAdmin() || 
-        incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'updatedAt']) ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['salePrice', 'updatedAt']) ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'salePrice', 'updatedAt'])
-      );
-      allow delete: if isSignedIn() && isValidId(productId) && isAdmin();
-    }
-
-    // C. Customers collection
-    function isValidCustomer(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.name is string && data.name.size() <= 150
-        && data.phone is string && data.phone.size() <= 30
-        && data.createdAt is string && data.createdAt.size() <= 50;
-    }
-
-    match /customers/{customerId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidId(customerId) && isValidCustomer(incoming());
-      allow delete: if isSignedIn() && isValidId(customerId) && isAdmin();
-    }
-
-    // D. Sales collection
-    function isValidSale(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.productId is string && data.productId.size() <= 128
-        && data.productName is string && data.productName.size() <= 150
-        && data.category is string && data.category.size() <= 100
-        && data.quantity is number && data.quantity > 0
-        && data.salePrice is number && data.salePrice >= 0
-        && data.totalPrice is number && data.totalPrice >= 0
-        && data.sellerId is string && data.sellerId.size() <= 128
-        && data.sellerName is string && data.sellerName.size() <= 150
-        && data.timestamp is string && data.timestamp.size() <= 50
-        && (!('customerName' in data) || data.customerName == null || (data.customerName is string && data.customerName.size() <= 150))
-        && (!('customerPhone' in data) || data.customerPhone == null || (data.customerPhone is string && data.customerPhone.size() <= 30));
-    }
-
-    match /sales/{saleId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(saleId) && isValidSale(incoming()) && (
-        exists(/databases/$(database)/documents/products/$(incoming().productId))
-      );
-      allow update, delete: if isSignedIn() && isValidId(saleId) && isAdmin();
-    }
-
-    // E. Purchase logs collection
-    function isValidPurchaseLog(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.productId is string && data.productId.size() <= 128
-        && data.productName is string && data.productName.size() <= 150
-        && data.category is string && data.category.size() <= 100
-        && data.quantityAdded is number && data.quantityAdded > 0
-        && data.costPrice is number && data.costPrice >= 0
-        && data.buyerId is string && data.buyerId.size() <= 128
-        && data.buyerName is string && data.buyerName.size() <= 150
-        && data.timestamp is string && data.timestamp.size() <= 50;
-    }
-
-    match /purchase_logs/{purchaseId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(purchaseId) && isValidPurchaseLog(incoming()) && (
-        exists(/databases/$(database)/documents/products/$(incoming().productId))
-      );
-      allow update, delete: if isSignedIn() && isValidId(purchaseId) && isAdmin();
-    }
-
-    // F. Audit logs collection
-    function isValidAuditLog(data) {
-      return data.id is string && data.id.size() <= 128
-        && data.userId is string && data.userId.size() <= 128
-        && data.userName is string && data.userName.size() <= 150
-        && data.action is string && data.action.size() <= 100
-        && data.details is string && data.details.size() <= 1000
-        && data.timestamp is string && data.timestamp.size() <= 50;
-    }
-
-    match /audit_logs/{logId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming());
-      allow update, delete: if false;
-    }
-
-    // Support collection for system configurations / initial seeding state
-    match /system_config/{configId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // Support collection for Admins list
-    match /admins/{adminId} {
-      allow read: if isSignedIn();
-      allow write: if false;
-    }
-  }
-}
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
