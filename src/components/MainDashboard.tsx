@@ -5,10 +5,14 @@ import {
   Sale, 
   AuditLog,
   Customer,
-  PurchaseLog
+  PurchaseLog,
+  Expense
 } from '../types';
 import { dbService } from '../services/db';
-import { seedDatabaseIfEmpty, ensureAnonymousLogin, db } from '../services/firebase';
+import { safeStorage } from '../services/safeStorage';
+import { seedDatabaseIfEmpty, ensureAnonymousLogin, db, handleFirestoreError, OperationType } from '../services/firebase';
+import { collection, query, onSnapshot } from 'firebase/firestore';
+import NovaDespesaModal from './NovaDespesaModal';
 // @ts-ignore
 import logoParoquia from '../logo.png';
 import { 
@@ -36,7 +40,8 @@ import {
   Printer,
   Sliders,
   AlertTriangle,
-  Upload
+  Upload,
+  DollarSign
 } from 'lucide-react';
 
 interface CartItem {
@@ -71,6 +76,8 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   const [sales, setSales] = useState<Sale[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [purchases, setPurchases] = useState<PurchaseLog[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState(false);
   
   // Search state
@@ -172,7 +179,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
   // USER LOGO CONFIGURATION STATE:
   const [parishLogo, setParishLogo] = useState<string | null>(() => {
-    return localStorage.getItem('stock_parocos_logo');
+    return safeStorage.getItem('stock_parocos_logo');
   });
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -185,7 +192,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
-        localStorage.setItem('stock_parocos_logo', base64String);
+        safeStorage.setItem('stock_parocos_logo', base64String);
         setParishLogo(base64String);
         triggerStatus('success', 'Logótipo da paróquia atualizado com sucesso!');
       };
@@ -197,7 +204,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   };
 
   const handleLogoReset = () => {
-    localStorage.removeItem('stock_parocos_logo');
+    safeStorage.removeItem('stock_parocos_logo');
     setParishLogo(null);
     triggerStatus('success', 'Logótipo da paróquia redefinido para o padrão.');
   };
@@ -254,7 +261,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   // CATEGORIES MANAGEMENT STATE:
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [categories, setCategories] = useState<string[]>(() => {
-    const saved = localStorage.getItem('stock_parocos_categories');
+    const saved = safeStorage.getItem('stock_parocos_categories');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -284,7 +291,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
     }
     const sorted = uniqueList.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
     setCategories(sorted);
-    localStorage.setItem('stock_parocos_categories', JSON.stringify(sorted));
+    safeStorage.setItem('stock_parocos_categories', JSON.stringify(sorted));
   };
 
   const handleRenameCategory = async (oldName: string, newName: string) => {
@@ -380,7 +387,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   const [productCode, setProductCode] = useState<string>('');
   const [productName, setProductName] = useState<string>('');
   const [productCategory, setProductCategory] = useState<string>(() => {
-    const saved = localStorage.getItem('stock_parocos_categories');
+    const saved = safeStorage.getItem('stock_parocos_categories');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -498,7 +505,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
       setCategories(prev => {
         let currentSaved: string[] = [];
-        const saved = localStorage.getItem('stock_parocos_categories');
+        const saved = safeStorage.getItem('stock_parocos_categories');
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
@@ -513,7 +520,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
         DEFAULT_CATEGORIES.forEach(c => mergedSet.add(c.trim()));
         // 2. Adicionar categorias conhecidas no estado anterior de React (para não perder as recém adicionadas)
         prev.forEach(c => mergedSet.add(c.trim()));
-        // 3. Adicionar categorias persistidas no localStorage
+        // 3. Adicionar categorias persistidas no safeStorage
         currentSaved.forEach(c => mergedSet.add(c.trim()));
         // 4. Adicionar categorias que estão associadas aos produtos ativos vindos do banco Firestore
         productCategories.forEach(c => mergedSet.add(c.trim()));
@@ -531,22 +538,24 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
         // Ordenar as categorias em ordem alfabética (respeitando acentos em Português)
         const sorted = uniqueList.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
-        localStorage.setItem('stock_parocos_categories', JSON.stringify(sorted));
+        safeStorage.setItem('stock_parocos_categories', JSON.stringify(sorted));
         return sorted;
       });
 
-      const [usrList, saleList, logs, custs, purchList] = await Promise.all([
+      const [usrList, saleList, logs, custs, purchList, expList] = await Promise.all([
         dbService.getUsers(),
         dbService.getSales(),
         dbService.getAuditLogs(),
         dbService.getCustomers(),
-        dbService.getPurchases()
+        dbService.getPurchases(),
+        dbService.getExpenses()
       ]);
       setUsers(usrList);
       setSales(saleList);
       setAuditLogs(logs);
       setCustomersList(custs);
       setPurchases(purchList);
+      setExpenses(expList);
       if (db) {
         setIsFirebaseConnected(true);
       }
@@ -589,6 +598,28 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
     executeCloudFirebaseSeed();
   }, []);
+
+  // Escutar as despesas em tempo real no Firestore para sincronização instantânea
+  useEffect(() => {
+    if (!db) return;
+
+    const pathForOnSnapshot = 'expenses';
+    const q = query(collection(db, pathForOnSnapshot));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: Expense[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ ...doc.data() } as Expense);
+      });
+      // Ordenar despesas por data decrescente
+      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setExpenses(list);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, pathForOnSnapshot);
+    });
+
+    return () => unsubscribe();
+  }, [isFirebaseConnected]);
 
   const triggerStatus = (type: 'success' | 'error', text: string) => {
     setStatusMessage({ type, text });
@@ -1318,7 +1349,16 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
            d.getMonth() === today.getMonth() &&
            d.getFullYear() === today.getFullYear();
   });
-  const dailyExpensesValue = todayPurchasesList.reduce((acc, curr) => acc + (curr.quantityAdded * curr.costPrice), 0);
+  const todayExpensesList = expenses.filter(e => {
+    const d = new Date(e.date);
+    const today = new Date();
+    return d.getDate() === today.getDate() &&
+           d.getMonth() === today.getMonth() &&
+           d.getFullYear() === today.getFullYear();
+  });
+  const purchaseExpensesSum = todayPurchasesList.reduce((acc, curr) => acc + (curr.quantityAdded * curr.costPrice), 0);
+  const generalExpensesSum = todayExpensesList.reduce((acc, curr) => acc + curr.amount, 0);
+  const dailyExpensesValue = purchaseExpensesSum + generalExpensesSum;
 
   const todaySalesList = sales.filter(s => {
     const d = new Date(s.timestamp);
@@ -1580,6 +1620,16 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                     >
                       <Plus size={14} />
                       <span>Cadastrar Novo Produto</span>
+                    </button>
+
+                    {/* Button to register a new expense */}
+                    <button
+                      type="button"
+                      onClick={() => setIsExpenseModalOpen(true)}
+                      className="flex items-center gap-1 text-xs font-bold bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white font-sans py-1.5 px-3 rounded shadow transition cursor-pointer"
+                    >
+                      <DollarSign size={14} />
+                      <span>Despesas</span>
                     </button>
                   </div>
                 </div>
@@ -2963,12 +3013,14 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
         <div className="max-w-7xl mx-auto px-4 py-2 gap-3 bg-slate-900 grid grid-cols-1 sm:grid-cols-3">
           
           {/* Card 1: Despesas Diárias */}
-          <div className="bg-slate-850 border border-slate-700 rounded p-2 flex items-center justify-between shadow-inner">
-            <div className="text-left">
+          <div className="bg-slate-850 border border-slate-700 rounded p-2 flex items-center justify-between shadow-inner hover:border-slate-500 transition duration-150">
+            <div className="text-left font-sans">
               <span className="text-[9px] text-slate-400 block font-mono font-bold uppercase tracking-wider">DESPESAS DIÁRIAS (HOJE)</span>
-              <strong className="text-xs text-rose-400 font-mono">
-                {dailyExpensesValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
-              </strong>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <strong className="text-xs text-rose-400 font-mono">
+                  {dailyExpensesValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
+                </strong>
+              </div>
             </div>
             <div className="bg-rose-955/20 p-1.5 rounded border border-rose-900/40 shrink-0">
               <TrendingDown size={13} className="text-rose-400" />
@@ -4294,6 +4346,16 @@ Muito obrigado por sua contribuição e preferência! Que Deus o abençoe!`;
           </div>
         </div>
       )}
+
+      <NovaDespesaModal
+        isOpen={isExpenseModalOpen}
+        onClose={() => setIsExpenseModalOpen(false)}
+        onSaveSuccess={async () => {
+          triggerStatus('success', 'Despesa/Saída cadastrada e debitada com sucesso!');
+          await loadData();
+        }}
+        currentUser={currentUser}
+      />
     </div>
   );
 }

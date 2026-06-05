@@ -1,7 +1,8 @@
-import { User, AuditLog, Product, Sale, PurchaseLog, Customer } from '../types';
+import { User, AuditLog, Product, Sale, PurchaseLog, Customer, Expense } from '../types';
 import { db, handleFirestoreError, OperationType, seedDatabaseIfEmpty, ensureAuthReady } from './firebase';
 import { collection, getDocs, doc, setDoc, getDocFromServer, writeBatch } from 'firebase/firestore';
 import { INITIAL_USERS } from './initialData';
+import { safeStorage } from './safeStorage';
 
 // Standard system keys for localStorage (used as fallback or for session storage)
 const STORAGE_KEYS = {
@@ -12,6 +13,7 @@ const STORAGE_KEYS = {
   PURCHASES: 'stock_parocos_purchases',
   CURRENT_USER_SESSION: 'stock_parocos_session',
   CUSTOMERS: 'stock_parocos_customers',
+  EXPENSES: 'stock_parocos_expenses',
 };
 
 // Helper to safely write/read from Firestore or fallback to localStorage
@@ -41,9 +43,9 @@ export const dbService = {
         handleFirestoreError(err, OperationType.WRITE, `audit_logs/${newLog.id}`);
       }
     } else {
-      const logs = JSON.parse(localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS) || '[]');
+      const logs = JSON.parse(safeStorage.getItem(STORAGE_KEYS.AUDIT_LOGS) || '[]');
       logs.unshift(newLog); // Newer logs first!
-      localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(logs));
+      safeStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(logs));
     }
     return newLog;
   },
@@ -65,7 +67,7 @@ export const dbService = {
         console.warn("Erro ao buscar usuários do Firestore (usando fallback local):", err);
       }
     }
-    const localUsers = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+    const localUsers = JSON.parse(safeStorage.getItem(STORAGE_KEYS.USERS) || '[]');
     if (localUsers.length > 0) {
       return localUsers;
     }
@@ -82,14 +84,14 @@ export const dbService = {
         handleFirestoreError(err, OperationType.WRITE, `users/${user.id}`);
       }
     }
-    const users = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+    const users = JSON.parse(safeStorage.getItem(STORAGE_KEYS.USERS) || '[]');
     const index = users.findIndex((u: any) => u.id === user.id);
     if (index >= 0) {
       users[index] = user;
     } else {
       users.push(user);
     }
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+    safeStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
   },
 
   // AUDIT LOGS
@@ -107,7 +109,7 @@ export const dbService = {
         handleFirestoreError(err, OperationType.LIST, 'audit_logs');
       }
     }
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS) || '[]');
+    return JSON.parse(safeStorage.getItem(STORAGE_KEYS.AUDIT_LOGS) || '[]');
   },
 
   // PRODUCTS & PURCHASES
@@ -125,7 +127,7 @@ export const dbService = {
         handleFirestoreError(err, OperationType.LIST, 'products');
       }
     }
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    return JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
   },
 
   async getPurchases(): Promise<PurchaseLog[]> {
@@ -142,7 +144,7 @@ export const dbService = {
         handleFirestoreError(err, OperationType.LIST, 'purchase_logs');
       }
     }
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.PURCHASES) || '[]');
+    return JSON.parse(safeStorage.getItem(STORAGE_KEYS.PURCHASES) || '[]');
   },
 
   async registerPurchase(
@@ -186,16 +188,16 @@ export const dbService = {
         handleFirestoreError(err, OperationType.WRITE, `purchases_and_product_update`);
       }
     } else {
-      const purchases = JSON.parse(localStorage.getItem(STORAGE_KEYS.PURCHASES) || '[]');
+      const purchases = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PURCHASES) || '[]');
       purchases.unshift(newPurchase);
-      localStorage.setItem(STORAGE_KEYS.PURCHASES, JSON.stringify(purchases));
+      safeStorage.setItem(STORAGE_KEYS.PURCHASES, JSON.stringify(purchases));
 
-      const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+      const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
       const index = products.findIndex((p: any) => p.id === productId);
       if (index >= 0) {
         products[index].quantity += quantityAdded;
         products[index].updatedAt = timestamp;
-        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+        safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
       }
     }
 
@@ -219,7 +221,7 @@ export const dbService = {
     }
 
     // Always keep LocalStorage in sync to prevent resurrection of deleted items or dual-mode discrepancy
-    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
     const index = products.findIndex((p: any) => p.id === product.id);
     if (index >= 0) {
       const prev = products[index];
@@ -238,7 +240,7 @@ export const dbService = {
       product.updatedAt = dateStr;
       products.push(product);
     }
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
 
     if (db) {
       try {
@@ -289,12 +291,12 @@ export const dbService = {
     let name = '';
 
     // Always keep Local Storage in sync as well
-    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
     const item = products.find((p: any) => p.id === productId);
     if (item) {
       name = item.name;
       const filtered = products.filter((p: any) => p.id !== productId);
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(filtered));
+      safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(filtered));
     }
 
     if (db) {
@@ -343,7 +345,7 @@ export const dbService = {
         handleFirestoreError(err, OperationType.LIST, 'sales');
       }
     }
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.SALES) || '[]');
+    return JSON.parse(safeStorage.getItem(STORAGE_KEYS.SALES) || '[]');
   },
 
   async generateNextReceiptNumber(timestampStr: string): Promise<string> {
@@ -431,7 +433,7 @@ export const dbService = {
       }
     }
 
-    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
     const productIndex = products.findIndex((p: any) => p.id === productId);
     
     if (productIndex === -1) {
@@ -451,9 +453,9 @@ export const dbService = {
     
     product.updatedAt = timestamp;
     products[productIndex] = product;
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
     
-    const sales = JSON.parse(localStorage.getItem(STORAGE_KEYS.SALES) || '[]');
+    const sales = JSON.parse(safeStorage.getItem(STORAGE_KEYS.SALES) || '[]');
     const totalPrice = product.salePrice * quantity;
     const newSale: Sale = {
       id: receiptNumber,
@@ -469,7 +471,7 @@ export const dbService = {
     };
     
     sales.unshift(newSale);
-    localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
+    safeStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
     
     await this.log(
       sellerId,
@@ -570,8 +572,8 @@ export const dbService = {
       }
     }
 
-    const products = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
-    const sales = JSON.parse(localStorage.getItem(STORAGE_KEYS.SALES) || '[]');
+    const products = JSON.parse(safeStorage.getItem(STORAGE_KEYS.PRODUCTS) || '[]');
+    const sales = JSON.parse(safeStorage.getItem(STORAGE_KEYS.SALES) || '[]');
     const processedSales: Sale[] = [];
     const logDetails: string[] = [];
     let totalSaleSum = 0;
@@ -627,8 +629,8 @@ export const dbService = {
     }
 
     sales.unshift(...processedSales);
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
-    localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
+    safeStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    safeStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
 
     const clientDesc = customerName ? ` para Cliente Identified: ${customerName} (${customerPhone})` : '';
     await this.log(
@@ -656,7 +658,7 @@ export const dbService = {
         handleFirestoreError(err, OperationType.LIST, 'customers');
       }
     }
-    const clientsStr = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
+    const clientsStr = safeStorage.getItem(STORAGE_KEYS.CUSTOMERS);
     if (!clientsStr) return [];
     try {
       return JSON.parse(clientsStr);
@@ -696,13 +698,13 @@ export const dbService = {
       }
     }
 
-    const customers = JSON.parse(localStorage.getItem(STORAGE_KEYS.CUSTOMERS) || '[]');
+    const customers = JSON.parse(safeStorage.getItem(STORAGE_KEYS.CUSTOMERS) || '[]');
     const existing = customers.find((c: any) => c.phone.trim() === trimmedPhone);
     
     if (existing) {
       if (existing.name !== name && name.trim()) {
         existing.name = name.trim();
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+        safeStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
       }
       return existing;
     }
@@ -715,8 +717,57 @@ export const dbService = {
     };
 
     customers.push(newCustomer);
-    localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+    safeStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
     return newCustomer;
+  },
+
+  // EXPENSES METHODS
+  async getExpenses(): Promise<Expense[]> {
+    if (db) {
+      try {
+        await ensureAuthReady();
+        const snap = await getDocs(collection(db, 'expenses'));
+        const list: Expense[] = [];
+        snap.forEach(d => {
+          list.push(d.data() as Expense);
+        });
+        return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      } catch (err) {
+        console.warn("Retornando fallback paroquial para despesas:", err);
+      }
+    }
+    const expensesStr = safeStorage.getItem(STORAGE_KEYS.EXPENSES);
+    if (!expensesStr) return [];
+    try {
+      return JSON.parse(expensesStr).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    } catch {
+      return [];
+    }
+  },
+
+  async saveExpense(category: string, amount: number, description: string, date: string): Promise<Expense> {
+    const newExpense: Expense = {
+      id: `exp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      category,
+      amount,
+      description,
+      date,
+      createdAt: new Date().toISOString()
+    };
+
+    if (db) {
+      try {
+        await ensureAuthReady();
+        await setDoc(doc(db, 'expenses', newExpense.id), newExpense);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `expenses/${newExpense.id}`);
+      }
+    } else {
+      const expenses = JSON.parse(safeStorage.getItem(STORAGE_KEYS.EXPENSES) || '[]');
+      expenses.unshift(newExpense);
+      safeStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+    }
+    return newExpense;
   },
 
   // SESSION MANAGEMENT
@@ -728,7 +779,7 @@ export const dbService = {
         user,
         loginTime: new Date().toISOString(),
       };
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_SESSION, JSON.stringify(session));
+      safeStorage.setItem(STORAGE_KEYS.CURRENT_USER_SESSION, JSON.stringify(session));
       try {
         await this.log(user.id, user.name, 'LOGIN', `Acesso ao sistema via PIN autenticado com sucesso.`);
       } catch (logErr) {
@@ -740,7 +791,7 @@ export const dbService = {
   },
 
   getCurrentSession(): { user: User; loginTime: string } | null {
-    const sessionStr = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_SESSION);
+    const sessionStr = safeStorage.getItem(STORAGE_KEYS.CURRENT_USER_SESSION);
     if (!sessionStr) return null;
     try {
       return JSON.parse(sessionStr);
@@ -754,11 +805,11 @@ export const dbService = {
     if (session) {
       await this.log(session.user.id, session.user.name, 'LOGOUT', `LOGOUT - Usuário ${session.user.name} encerrou a sessão`);
     }
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_SESSION);
+    safeStorage.removeItem(STORAGE_KEYS.CURRENT_USER_SESSION);
   },
 
   async clearSales(): Promise<void> {
-    localStorage.setItem(STORAGE_KEYS.SALES, '[]');
+    safeStorage.setItem(STORAGE_KEYS.SALES, '[]');
     if (db) {
       try {
         await ensureAuthReady();
@@ -775,7 +826,7 @@ export const dbService = {
   },
 
   async clearAuditLogs(): Promise<void> {
-    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, '[]');
+    safeStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, '[]');
     if (db) {
       try {
         await ensureAuthReady();
@@ -792,13 +843,11 @@ export const dbService = {
   },
 
   async deleteUser(userId: string): Promise<void> {
-    const users = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+    const users = JSON.parse(safeStorage.getItem(STORAGE_KEYS.USERS) || '[]');
     const filtered = users.filter((u: any) => u.id !== userId);
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
+    safeStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
     if (db) {
       try {
-        // Since we import writeBatch from firestore at top, we can use a bach or standard setDoc or similar. But we can just use setDoc (or deleteDoc style doc ref writing with null) or write a batch. Since doc() and deleteDoc imports are great, we can import deleteDoc. Wait, we don't have deleteDoc imported, but let's just write to Firestore.
-        // Wait, can we delete doc? Yes, deleteDoc is easily imported, but we can also use setDoc to delete or we can just import deleteDoc from firebase/firestore.
         await ensureAuthReady();
         const { deleteDoc } = await import('firebase/firestore');
         await deleteDoc(doc(db, 'users', userId));
@@ -810,13 +859,14 @@ export const dbService = {
 
   // Reset demo databases completely
   async resetToDefault(): Promise<void> {
-    localStorage.removeItem(STORAGE_KEYS.USERS);
-    localStorage.removeItem(STORAGE_KEYS.PRODUCTS);
-    localStorage.removeItem(STORAGE_KEYS.AUDIT_LOGS);
-    localStorage.removeItem(STORAGE_KEYS.SALES);
-    localStorage.removeItem(STORAGE_KEYS.PURCHASES);
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_SESSION);
-    localStorage.removeItem('stock_parocos_sys_seeded');
+    safeStorage.removeItem(STORAGE_KEYS.USERS);
+    safeStorage.removeItem(STORAGE_KEYS.PRODUCTS);
+    safeStorage.removeItem(STORAGE_KEYS.AUDIT_LOGS);
+    safeStorage.removeItem(STORAGE_KEYS.SALES);
+    safeStorage.removeItem(STORAGE_KEYS.PURCHASES);
+    safeStorage.removeItem(STORAGE_KEYS.CURRENT_USER_SESSION);
+    safeStorage.removeItem(STORAGE_KEYS.EXPENSES);
+    safeStorage.removeItem('stock_parocos_sys_seeded');
 
     if (db) {
       try {

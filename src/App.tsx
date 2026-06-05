@@ -1,6 +1,7 @@
 import React, { Component, useState, useEffect } from 'react';
 import { User } from './types';
 import { dbService } from './services/db';
+import { safeStorage } from './services/safeStorage';
 import PinLogin from './components/PinLogin';
 import MainDashboard from './components/MainDashboard';
 
@@ -45,7 +46,7 @@ class ErrorBoundary extends Component<
             <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-755">
               <button
                 onClick={() => {
-                  localStorage.clear();
+                  safeStorage.clear();
                   window.location.reload();
                 }}
                 className="px-4 py-2 bg-red-700 hover:bg-red-800 text-white font-mono text-xs font-bold rounded transition shadow cursor-pointer"

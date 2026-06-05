@@ -70,6 +70,15 @@ export interface PurchaseLog {
   timestamp: string;
 }
 
+export interface Expense {
+  id: string;
+  category: string;
+  amount: number;
+  description: string;
+  date: string;
+  createdAt: string;
+}
+
 declare global {
   interface Window {
     html2pdf: any;

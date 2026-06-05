@@ -3,6 +3,7 @@ import { getAuth, signInAnonymously } from 'firebase/auth';
 import { initializeFirestore, memoryLocalCache, doc, getDocFromServer, collection, getDocs, limit, query, writeBatch, getFirestore } from 'firebase/firestore';
 import { INITIAL_USERS, INITIAL_PRODUCTS } from './initialData';
 import firebaseConfigJson from '../../firebase-applet-config.json';
+import { safeStorage } from './safeStorage';
 
 const metaEnv = (import.meta as any).env || {};
 
@@ -165,7 +166,7 @@ export async function seedDatabaseIfEmpty(onProgress?: (msg: string) => void): P
     onProgress?.("Conectando ao banco de dados...");
     await ensureAuthReady();
 
-    if (localStorage.getItem('stock_parocos_sys_seeded') === 'true') {
+    if (safeStorage.getItem('stock_parocos_sys_seeded') === 'true') {
       return { seeded: false };
     }
 
@@ -181,7 +182,7 @@ export async function seedDatabaseIfEmpty(onProgress?: (msg: string) => void): P
     }
 
     if (hasSeededMarker) {
-      localStorage.setItem('stock_parocos_sys_seeded', 'true');
+      safeStorage.setItem('stock_parocos_sys_seeded', 'true');
       return { seeded: false };
     }
 
@@ -189,7 +190,7 @@ export async function seedDatabaseIfEmpty(onProgress?: (msg: string) => void): P
     const snapshot = await getDocs(query(productsRef, limit(1)));
 
     if (!snapshot.empty) {
-      localStorage.setItem('stock_parocos_sys_seeded', 'true');
+      safeStorage.setItem('stock_parocos_sys_seeded', 'true');
       return { seeded: false };
     }
 
@@ -207,7 +208,7 @@ export async function seedDatabaseIfEmpty(onProgress?: (msg: string) => void): P
     batch.set(seedDocRef, { seeded: true, timestamp: new Date().toISOString() });
     await batch.commit();
 
-    localStorage.setItem('stock_parocos_sys_seeded', 'true');
+    safeStorage.setItem('stock_parocos_sys_seeded', 'true');
     onProgress?.("Sistema pronto para uso!");
     return { seeded: true };
   } catch (error: any) {
