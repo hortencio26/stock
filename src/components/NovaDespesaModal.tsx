@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Save } from 'lucide-react';
 import { dbService } from '../services/db';
 import { safeStorage } from '../services/safeStorage';
-import { User } from '../types';
+import { User, Expense } from '../types';
 
 interface NovaDespesaProps {
   isOpen: boolean;
   onClose: () => void;
   onSaveSuccess: () => void;
   currentUser: User;
+  editingExpense?: Expense | null;
 }
 
 const DEFAULT_EXPENSE_CATEGORIES = [
@@ -21,7 +22,7 @@ const DEFAULT_EXPENSE_CATEGORIES = [
   'Outros'
 ];
 
-export default function NovaDespesaModal({ isOpen, onClose, onSaveSuccess, currentUser }: NovaDespesaProps) {
+export default function NovaDespesaModal({ isOpen, onClose, onSaveSuccess, currentUser, editingExpense }: NovaDespesaProps) {
   const [categoria, setCategoria] = useState('Fraternidade');
   const [categoriesList, setCategoriesList] = useState<string[]>(() => {
     const saved = safeStorage.getItem('stock_parocos_expense_categories');
@@ -48,6 +49,25 @@ export default function NovaDespesaModal({ isOpen, onClose, onSaveSuccess, curre
   });
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    if (editingExpense && isOpen) {
+      setCategoria(editingExpense.category);
+      setValor(editingExpense.amount.toString());
+      setDescricao(editingExpense.description);
+      setData(editingExpense.date);
+    } else if (isOpen) {
+      setCategoria('Fraternidade');
+      setValor('');
+      setDescricao('');
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      setData(`${year}-${month}-${day}`);
+    }
+    setErrorMessage('');
+  }, [editingExpense, isOpen]);
 
   if (!isOpen) return null;
 
@@ -97,16 +117,38 @@ export default function NovaDespesaModal({ isOpen, onClose, onSaveSuccess, curre
     setIsSaving(true);
 
     try {
-      // Save expense via dbService
-      await dbService.saveExpense(categoria, parsedAmount, descricao.trim(), data);
-      
-      // Register audit log
-      await dbService.log(
-        currentUser.id,
-        currentUser.name,
-        'CADASTRO_DESPESA',
-        `Registrada despesa de MTn ${parsedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} na categoria "${categoria}". Obs: ${descricao.trim()}`
-      );
+      if (editingExpense) {
+        // Build updated expense object
+        const updatedExpenseObj: Expense = {
+          ...editingExpense,
+          category: categoria,
+          amount: parsedAmount,
+          description: descricao.trim(),
+          date: data,
+        };
+
+        // Update database (Cloud or Local)
+        await dbService.updateExpense(updatedExpenseObj);
+
+        // Register edit details in audit log
+        await dbService.log(
+          currentUser.id,
+          currentUser.name,
+          'EDICAO_DESPESA',
+          `Editada despesa (${editingExpense.id}): Categoria anterior: "${editingExpense.category}" (Valor anterior: MTn ${editingExpense.amount.toLocaleString('pt-BR')}) para nova Categoria: "${categoria}" (Novo valor: MTn ${parsedAmount.toLocaleString('pt-BR')}). Obs: ${descricao.trim()}`
+        );
+      } else {
+        // Save expense via dbService
+        await dbService.saveExpense(categoria, parsedAmount, descricao.trim(), data);
+        
+        // Register audit log
+        await dbService.log(
+          currentUser.id,
+          currentUser.name,
+          'CADASTRO_DESPESA',
+          `Registrada despesa de MTn ${parsedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} na categoria "${categoria}". Obs: ${descricao.trim()}`
+        );
+      }
       
       onSaveSuccess();
       onClose();
@@ -125,7 +167,9 @@ export default function NovaDespesaModal({ isOpen, onClose, onSaveSuccess, curre
         <header className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between border-b-2 border-blue-600">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-mono font-extrabold text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 rounded px-1.5 py-0.5 leading-none">MTn</span>
-            <h3 className="text-xs font-mono font-bold tracking-tight uppercase">REGISTRAR NOVA DESPESA / SAÍDA</h3>
+            <h3 className="text-xs font-mono font-bold tracking-tight uppercase">
+              {editingExpense ? 'EDITAR DESPESA / SAÍDA' : 'REGISTRAR NOVA DESPESA / SAÍDA'}
+            </h3>
           </div>
           <button 
             type="button" 
@@ -264,7 +308,7 @@ export default function NovaDespesaModal({ isOpen, onClose, onSaveSuccess, curre
               disabled={isSaving}
             >
               <Save size={13} className="text-emerald-400" />
-              {isSaving ? 'SALVANDO...' : 'REGISTRAR'}
+              {isSaving ? 'SALVANDO...' : editingExpense ? 'SALVAR ALTERAÇÕES' : 'REGISTRAR'}
             </button>
           </footer>
         </form>

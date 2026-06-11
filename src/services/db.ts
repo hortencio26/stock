@@ -770,6 +770,41 @@ export const dbService = {
     return newExpense;
   },
 
+  async updateExpense(updatedExpense: Expense): Promise<Expense> {
+    if (db) {
+      try {
+        await ensureAuthReady();
+        await setDoc(doc(db, 'expenses', updatedExpense.id), updatedExpense);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `expenses/${updatedExpense.id}`);
+      }
+    } else {
+      const expenses = JSON.parse(safeStorage.getItem(STORAGE_KEYS.EXPENSES) || '[]');
+      const index = expenses.findIndex((e: any) => e.id === updatedExpense.id);
+      if (index !== -1) {
+        expenses[index] = updatedExpense;
+        safeStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+      }
+    }
+    return updatedExpense;
+  },
+
+  async deleteExpense(expenseId: string): Promise<void> {
+    if (db) {
+      try {
+        await ensureAuthReady();
+        const { deleteDoc } = await import('firebase/firestore');
+        await deleteDoc(doc(db, 'expenses', expenseId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `expenses/${expenseId}`);
+      }
+    } else {
+      const expenses = JSON.parse(safeStorage.getItem(STORAGE_KEYS.EXPENSES) || '[]');
+      const filtered = expenses.filter((e: any) => e.id !== expenseId);
+      safeStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(filtered));
+    }
+  },
+
   // SESSION MANAGEMENT
   async loginByPin(pin: string): Promise<User | null> {
     const users = await this.getUsers();

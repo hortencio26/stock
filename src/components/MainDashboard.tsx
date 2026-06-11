@@ -41,7 +41,8 @@ import {
   Sliders,
   AlertTriangle,
   Upload,
-  DollarSign
+  DollarSign,
+  Edit2
 } from 'lucide-react';
 
 interface CartItem {
@@ -78,6 +79,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   const [purchases, setPurchases] = useState<PurchaseLog[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState(false);
   
   // Search state
@@ -222,7 +224,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
   const [reportEndDate, setReportEndDate] = useState<string>(() => {
     return new Date().toISOString().substring(0, 10);
   });
-  const [tipoRelatorio, setTipoRelatorio] = useState<'vendas' | 'compras' | 'stock'>('vendas');
+  const [tipoRelatorio, setTipoRelatorio] = useState<'vendas' | 'compras' | 'stock' | 'despesas'>('vendas');
 
   // Status message
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -601,7 +603,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
   // Escutar as despesas em tempo real no Firestore para sincronização instantânea
   useEffect(() => {
-    if (!db) return;
+    if (!db || !isFirebaseConnected) return;
 
     const pathForOnSnapshot = 'expenses';
     const q = query(collection(db, pathForOnSnapshot));
@@ -846,7 +848,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
             : `Compra/Entrada de novo produto: ${purchaseQuantity}x "${productName.trim()}" (Custo Unit.: ${costPrice.toFixed(2)} MTn) de Categoria "${productCategory}"`
         );
 
-        triggerStatus('success', 'Registo efetuado com sucesso. O formulário foi limpo para um novo cadastro.');
+        triggerStatus('success', 'Registo efetuado com sucesso.');
         await loadData();
         await handleClearForm();
       }
@@ -1115,7 +1117,9 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
         ? 'Relatório de Vendas (Saídas)' 
         : tipoRelatorio === 'compras' 
           ? 'Relatório de Compras (Aquisições)' 
-          : 'Relatório de Stock Atual';
+          : tipoRelatorio === 'despesas'
+            ? 'Relatório de Despesas / Saídas'
+            : 'Relatório de Stock Atual';
 
       const dataInicial = new Date(reportStartDate + 'T00:00:00').toLocaleDateString('pt-BR');
       const dataFinal = new Date(reportEndDate + 'T23:59:59').toLocaleDateString('pt-BR');
@@ -1168,7 +1172,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
               .header p { margin: 2px 0; color: #64748b; font-size: 13px; }
               
               /* OCULTA TODOS OS BOTÕES INTERNOS E SEGUNDAS VIAS */
-              button, input, select, form, th:last-child, td:last-child, .no-print, [type="button"] { display: none !important; }
+              button, input, select, form, th:last-child, td:last-child, .no-print, [type="button"], .print-hide { display: none !important; }
               
               /* REGRAS CRÍTICAS PARA TRAVAR QUEBRAS DE LINHA */
               table { border-collapse: collapse; width: 100%; margin-top: 20px; font-size: 13px; }
@@ -1322,14 +1326,24 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
     const estimatedProfit = totalSalesValue - totalCMV;
 
+    // 4. Filter Expenses logs
+    const filteredExpenses = expenses.filter(e => {
+      const ts = new Date(e.date + 'T12:00:00');
+      return ts >= start && ts <= end;
+    });
+
+    const totalExpensesValue = filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+
     return {
       filteredPurchases,
       filteredSales,
+      filteredExpenses,
       totalPurchasesValue,
       totalSalesValue,
       totalSalesQty,
       totalCMV,
-      estimatedProfit
+      estimatedProfit,
+      totalExpensesValue
     };
   };
 
@@ -1428,46 +1442,54 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
           </div>
 
           {/* User profile & Active Session State info */}
-          <div className="flex flex-wrap items-center gap-4 mt-3 md:mt-0 bg-slate-800 px-4 py-2 rounded border border-slate-700">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white text-xs font-bold shadow-sm border border-blue-400 font-mono">
+          <div className="flex flex-row items-center justify-between gap-1.5 sm:gap-4 mt-3 md:mt-0 bg-slate-800 px-2.5 py-1.5 sm:py-2 rounded border border-slate-700 w-full md:w-auto">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded bg-blue-600 flex items-center justify-center text-white text-[11px] sm:text-xs font-bold shadow-sm border border-blue-400 font-mono shrink-0">
                 {currentUser.name.substring(0, 2).toUpperCase()}
               </div>
-              <div>
-                <div className="text-xs font-bold text-slate-200">{currentUser.name}</div>
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${currentUser.role === 'Administrador' ? 'bg-amber-400' : 'bg-green-400'}`}></span>
-                  <span className="text-[10px] text-slate-400 font-mono font-medium">{currentUser.role}</span>
+              <div className="hidden min-[380px]:block text-left">
+                <div className="text-[10px] sm:text-xs font-bold text-slate-200 leading-tight">{currentUser.name}</div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${currentUser.role === 'Administrador' ? 'bg-amber-400' : 'bg-green-400'}`}></span>
+                  <span className="text-[9px] sm:text-[10px] text-slate-400 font-mono font-medium leading-none">{currentUser.role}</span>
                 </div>
               </div>
             </div>
-            <span className="text-slate-650 hidden sm:inline">|</span>
-            <label className="flex items-center gap-1.5 text-xs font-bold bg-blue-700 hover:bg-blue-600 active:bg-blue-800 text-white font-mono py-1.5 px-3 rounded shadow transition border border-blue-800 cursor-pointer print-hide leading-none">
-              <Upload size={13} />
-              <span>Configurar Logótipo</span>
-              <input 
-                type="file" 
-                accept="image/png, image/jpeg" 
-                onChange={handleLogoUpload} 
-                className="hidden" 
-              />
-            </label>
-            <span className="text-slate-650 hidden sm:inline">|</span>
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-1 text-xs font-bold bg-red-800 hover:bg-red-700 active:bg-red-900 text-red-100 font-mono py-1.5 px-3 rounded shadow transition border border-red-900 print-hide"
-            >
-              <span>Sair / Trocar Usuário</span>
-            </button>
+            
+            <div className="flex items-center gap-1.5 ml-auto">
+              <label className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-blue-700 hover:bg-blue-600 active:bg-blue-800 text-white font-mono py-1.5 px-2.5 sm:px-3 rounded shadow transition border border-blue-800 cursor-pointer print-hide leading-none shrink-0 select-none">
+                <Upload size={12} />
+                <span>
+                  <span className="inline md:hidden">Logo</span>
+                  <span className="hidden md:inline">Configurar Logótipo</span>
+                </span>
+                <input 
+                  type="file" 
+                  accept="image/png, image/jpeg" 
+                  onChange={handleLogoUpload} 
+                  className="hidden" 
+                />
+              </label>
+              
+              <button
+                onClick={onLogout}
+                className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-red-800 hover:bg-red-700 active:bg-red-900 text-red-100 font-mono py-1.5 px-2.5 sm:px-3 rounded shadow transition border border-red-900 print-hide shrink-0"
+              >
+                <span>
+                  <span className="inline md:hidden">Sair</span>
+                  <span className="hidden md:inline">Sair / Trocar Usuário</span>
+                </span>
+              </button>
+            </div>
           </div>
         </header>
 
         {/* 4. TABBED CONTAINER HEADER - WinForms Style */}
         <div className="max-w-7xl mx-auto w-full px-6 pt-4">
-          <div className="bg-slate-200 p-1 border border-slate-300 rounded-t flex flex-wrap gap-1">
+          <div className="bg-slate-200 p-1 border border-slate-300 rounded-t flex flex-nowrap gap-1 overflow-x-auto whitespace-nowrap scrollbar-none">
             <button
               onClick={() => setActiveTab('products')}
-              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition ${
+              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition shrink-0 ${
                 activeTab === 'products'
                   ? 'bg-white text-blue-900 border-blue-800 shadow-sm'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
@@ -1479,7 +1501,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
             <button
               onClick={() => setActiveTab('pricing')}
-              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition relative ${
+              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition relative shrink-0 ${
                 activeTab === 'pricing'
                   ? 'bg-white text-blue-900 border-blue-800 shadow-sm'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
@@ -1488,7 +1510,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
               <Coins size={13} />
               <span>Atribuição de Preços</span>
               {unpricedProducts.length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-full animate-bounce">
+                <span className="absolute top-1 right-1 bg-red-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-full animate-bounce">
                   {unpricedProducts.length}
                 </span>
               )}
@@ -1496,7 +1518,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
             <button
               onClick={() => setActiveTab('sales')}
-              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition ${
+              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition shrink-0 ${
                 activeTab === 'sales'
                   ? 'bg-white text-blue-900 border-blue-800 shadow-sm'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
@@ -1508,7 +1530,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
             <button
               onClick={() => setActiveTab('categories')}
-              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition ${
+              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition shrink-0 ${
                 activeTab === 'categories'
                   ? 'bg-white text-blue-900 border-blue-800 shadow-sm'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
@@ -1520,7 +1542,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
             <button
               onClick={() => setActiveTab('reports')}
-              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition ${
+              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition shrink-0 ${
                 activeTab === 'reports'
                   ? 'bg-white text-blue-900 border-blue-800 shadow-sm'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
@@ -1532,7 +1554,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
             <button
               onClick={() => setActiveTab('audit')}
-              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition ${
+              className={`px-4 py-2.5 text-xs font-bold rounded-t flex items-center gap-2 border-b-2 transition shrink-0 ${
                 activeTab === 'audit'
                   ? 'bg-white text-blue-900 border-blue-800 shadow-sm'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
@@ -1579,33 +1601,36 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
             <div className="space-y-4 w-full">
               
               {/* Filter bar with Quick Action button */}
-              <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center bg-slate-100 p-3 rounded border border-slate-300 shadow-sm print-hide mb-2">
-                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-slate-750">FILTRAR STOCK:</span>
-                    <div className="relative">
+              <div className="flex flex-col md:flex-row gap-2.5 justify-between items-stretch md:items-center bg-slate-100 p-2 sm:p-3 rounded border border-slate-300 shadow-sm print-hide mb-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full">
+                  <div className="flex flex-row items-center gap-2 w-full sm:w-auto">
+                    <span className="font-mono text-[10px] sm:text-xs font-bold text-slate-750 whitespace-nowrap">FILTRAR STOCK:</span>
+                    <div className="relative flex-1 sm:flex-initial">
                       <input
                         type="text"
                         placeholder="Buscar por descrição, SKU ou grupo..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-8 pr-3 py-1.5 text-xs bg-white text-slate-800 border border-slate-300 rounded focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 w-64 font-sans"
+                        className="pl-8 pr-3 py-1.5 text-[11px] sm:text-xs bg-white text-slate-800 border border-slate-300 rounded focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 w-full sm:w-64 font-sans h-[32px]"
                       />
                       <Search size={12} className="text-slate-400 absolute left-2.5 top-2.5" />
                     </div>
                   </div>
 
                   {/* Buttons group */}
-                  <div className="flex gap-2">
+                  <div className="flex flex-row items-center gap-1.5 mt-1 sm:mt-0 w-full sm:w-auto overflow-x-auto sm:overflow-visible scrollbar-none pb-0.5 sm:pb-0">
                     <button
                       type="button"
                       onClick={() => {
                         setIsCategoryModalOpen(true);
                       }}
-                      className="flex items-center gap-1 text-xs font-bold bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white font-sans py-1.5 px-3 rounded shadow transition cursor-pointer"
+                      className="flex items-center justify-center gap-1 text-[10px] sm:text-xs font-bold bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white font-sans py-1.5 px-2 sm:px-3 rounded shadow transition cursor-pointer whitespace-nowrap h-[32px] flex-1 sm:flex-none uppercase"
                     >
-                      <Layers size={14} />
-                      <span>Gerenciar Categorias</span>
+                      <Layers size={13} className="hidden sm:inline" />
+                      <span>
+                        <span className="inline md:hidden">Categoria</span>
+                        <span className="hidden md:inline">Gerenciar Categorias</span>
+                      </span>
                     </button>
 
                     {/* Button to register a new product */}
@@ -1616,42 +1641,48 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                         setFormMode('NOVO');
                         setIsProductModalOpen(true);
                       }}
-                      className="flex items-center gap-1 text-xs font-bold bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-sans py-1.5 px-3 rounded shadow transition"
+                      className="flex items-center justify-center gap-1 text-[10px] sm:text-xs font-bold bg-blue-700 hover:bg-blue-800 active:bg-blue-900 text-white font-sans py-1.5 px-2 sm:px-3 rounded shadow transition whitespace-nowrap h-[32px] flex-1 sm:flex-none uppercase"
                     >
-                      <Plus size={14} />
-                      <span>Cadastrar Novo Produto</span>
+                      <Plus size={13} className="hidden sm:inline" />
+                      <span>
+                        <span className="inline md:hidden">Cadastrar</span>
+                        <span className="hidden md:inline">Cadastrar Novo Produto</span>
+                      </span>
                     </button>
 
                     {/* Button to register a new expense */}
                     <button
                       type="button"
-                      onClick={() => setIsExpenseModalOpen(true)}
-                      className="flex items-center gap-1 text-xs font-bold bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white font-sans py-1.5 px-3 rounded shadow transition cursor-pointer"
+                      onClick={() => {
+                        setEditingExpense(null);
+                        setIsExpenseModalOpen(true);
+                      }}
+                      className="flex items-center justify-center gap-1 text-[10px] sm:text-xs font-bold bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white font-sans py-1.5 px-2 sm:px-3 rounded shadow transition cursor-pointer whitespace-nowrap h-[32px] flex-1 sm:flex-none uppercase"
                     >
-                      <DollarSign size={14} />
+                      <DollarSign size={13} className="hidden md:inline" />
                       <span>Despesas</span>
                     </button>
                   </div>
                 </div>
 
-                <span className="text-[10px] text-slate-500 font-mono">
+                <span className="text-[10px] text-slate-500 font-mono hidden md:inline whitespace-nowrap">
                   Mostrando <strong className="text-slate-800">{filteredProducts.length}</strong> de {products.length} itens.
                 </span>
               </div>
 
               {/* Alternating row thin-border Excel table with independent horizontal overflow and global sticky top-header relative to the viewport */}
-              <div className="overflow-auto max-h-[500px] border border-slate-300 rounded shadow-sm bg-white">
-                <table className="excel-grid min-w-full font-sans text-xs">
-                  <thead className="sticky top-0 z-10 bg-slate-100 shadow-[0_1px_0_0_rgba(0,0,0,0.1)]">
-                    <tr>
-                      <th className="py-1.5 px-3 text-left w-24">CÓDIGO</th>
-                      <th className="py-1.5 px-3 text-left">DESCRIÇÃO DO PRODUTO</th>
-                      <th className="py-1.5 px-3 text-left w-36">CATEGORIA</th>
-                      <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap">CUSTO (MTn)</th>
-                      <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap">VENDA (MTn)</th>
-                      <th className="py-1.5 px-3 text-right w-20">STOCK</th>
-                      <th className="py-1.5 px-3 text-center w-28">ESTADO</th>
-                      <th className="py-1.5 px-3 text-center w-36">AÇÕES</th>
+              <div className="overflow-auto max-h-[500px] border border-slate-300 rounded shadow-sm bg-white w-full">
+                <table className="excel-grid min-w-[650px] md:min-w-full font-sans text-xs">
+                  <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgba(0,0,0,0.1)]">
+                    <tr className="bg-emerald-700 text-white font-normal">
+                      <th className="hidden">CÓDIGO</th>
+                      <th className="py-1.5 px-3 text-left !bg-emerald-700 !text-white !font-normal">DESCRIÇÃO</th>
+                      <th className="py-1.5 px-3 text-left w-36 hidden md:table-cell !bg-emerald-700 !text-white !font-normal">CATEGORIA</th>
+                      <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap hidden md:table-cell !bg-emerald-700 !text-white !font-normal">CUSTO (MTn)</th>
+                      <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">VENDA (MTn)</th>
+                      <th className="py-1.5 px-3 text-right w-20 !bg-emerald-700 !text-white !font-normal">STOCK</th>
+                      <th className="py-1.5 px-3 text-center w-28 hidden lg:table-cell !bg-emerald-700 !text-white !font-normal">ESTADO</th>
+                      <th className="py-1.5 px-3 text-center w-36 !bg-emerald-700 !text-white !font-normal">AÇÕES</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1673,20 +1704,20 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
                       return (
                         <tr key={p.id} className={isSelectedInForm ? 'bg-blue-50/70 border-l-4 border-l-blue-600 border-b border-slate-150' : 'hover:bg-slate-50 border-b border-slate-150'}>
-                          <td className="py-1.5 px-3 font-mono text-slate-700 text-left font-bold">{p.code}</td>
+                          <td className="hidden">{p.code}</td>
                           <td className="py-1.5 px-3 text-slate-900 text-left">
                             <button
-                              type="button"
-                              onClick={() => handleOpenProductActions(p)}
-                              className="text-blue-700 hover:text-blue-900 hover:underline font-bold text-left cursor-pointer focus:outline-none"
+                                type="button"
+                                onClick={() => handleOpenProductActions(p)}
+                                className="text-blue-700 hover:text-blue-900 hover:underline font-normal text-left cursor-pointer focus:outline-none"
                             >
                               {p.name}
                             </button>
                           </td>
-                          <td className="py-1.5 px-3 text-slate-650 text-left font-sans">
+                          <td className="py-1.5 px-3 text-slate-650 text-left font-sans hidden md:table-cell">
                             {p.category}
                           </td>
-                          <td className="py-1.5 px-3 text-slate-600 text-right font-mono whitespace-nowrap">
+                          <td className="py-1.5 px-3 text-slate-600 text-right font-mono whitespace-nowrap hidden md:table-cell">
                             {p.type === 'servico' ? 'N/A' : `${p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn`}
                           </td>
                           <td className="py-1.5 px-3 text-slate-900 text-right font-mono whitespace-nowrap">
@@ -1702,7 +1733,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                               p.quantity
                             )}
                           </td>
-                          <td className="py-1.5 px-3 text-center">{stockBadge}</td>
+                          <td className="py-1.5 px-3 text-center hidden lg:table-cell">{stockBadge}</td>
                           <td className="py-1.5 px-3 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               {/* Option 1: Edit Details (Load to Form dialog) */}
@@ -1807,18 +1838,18 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 }
 
                 return (
-                  <div className="overflow-x-auto border border-slate-300 rounded shadow-inner bg-white">
+                  <div className="overflow-x-auto border border-emerald-300 rounded shadow-inner bg-white">
                     <table className="excel-grid min-w-full font-sans text-xs">
-                      <thead className="bg-slate-100 z-10 shadow-sm">
-                        <tr className="bg-slate-100 font-mono">
-                          <th className="py-1.5 px-3 text-left w-24">CÓDIGO (SKU)</th>
-                          <th className="py-1.5 px-3 text-left">DESCRIÇÃO DO PRODUTO</th>
-                          <th className="py-1.5 px-3 text-left w-36">CATEGORIA</th>
-                          <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap">CUSTO (MTn)</th>
-                          <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap">VENDA ATUAL (MTn)</th>
-                          <th className="py-1.5 px-3 text-right w-24">ESTOQUE</th>
-                          <th className="py-1.5 px-3 text-center w-52">EDITAR PREÇO VENDA</th>
-                          <th className="py-1.5 px-3 text-center w-36">AÇÃO</th>
+                      <thead className="sticky top-0 z-10 shadow-sm">
+                        <tr className="bg-emerald-700 text-white font-sans text-xs">
+                          <th className="hidden">CÓDIGO (SKU)</th>
+                          <th className="py-1.5 px-3 text-left !bg-emerald-700 !text-white !font-normal">DESCRIÇÃO</th>
+                          <th className="py-1.5 px-3 text-left w-36 !bg-emerald-700 !text-white !font-normal">CATEGORIA</th>
+                          <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">CUSTO (MTn)</th>
+                          <th className="py-1.5 px-3 text-right w-32 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">VENDA ATUAL (MTn)</th>
+                          <th className="py-1.5 px-3 text-right w-24 !bg-emerald-700 !text-white !font-normal">ESTOQUE</th>
+                          <th className="py-1.5 px-3 text-center w-52 !bg-emerald-700 !text-white !font-normal">EDITAR PREÇO VENDA</th>
+                          <th className="py-1.5 px-3 text-center w-36 !bg-emerald-700 !text-white !font-normal">AÇÃO</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1830,7 +1861,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
                           return (
                             <tr key={p.id} className="hover:bg-slate-50 border-b border-slate-150">
-                              <td className="py-1.5 px-3 font-mono text-slate-700 text-left font-bold">{p.code}</td>
+                              <td className="hidden">{p.code}</td>
                               <td className="py-1.5 px-3 text-left font-normal">
                                 <button
                                   type="button"
@@ -1993,15 +2024,15 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                       </p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto border border-slate-300 rounded shadow-inner max-h-[400px] overflow-y-auto">
+                    <div className="overflow-x-auto border border-emerald-300 rounded shadow-inner max-h-[400px] overflow-y-auto">
                       <table className="excel-grid min-w-full font-sans text-xs">
-                        <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
+                        <thead className="sticky top-0 z-10 shadow-sm">
                           <tr>
-                            <th className="py-2 px-3 text-left whitespace-nowrap">DESCRIÇÃO DO PRODUTO</th>
-                            <th className="py-2 px-3 text-left w-32 whitespace-nowrap">CATEGORIA</th>
-                            <th className="py-2 px-3 text-right w-24 whitespace-nowrap">ESTOQUE ATUAL</th>
-                            <th className="py-2 px-3 text-right w-28 whitespace-nowrap">VALOR DE VENDA (MTn)</th>
-                            <th className="py-2 px-3 text-center w-28 whitespace-nowrap">SELEÇÃO</th>
+                            <th className="py-2 px-3 text-left whitespace-nowrap !bg-emerald-700 !text-white !font-normal">DESCRIÇÃO</th>
+                            <th className="py-2 px-3 text-left w-32 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">CATEGORIA</th>
+                            <th className="py-2 px-3 text-right w-24 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">ESTOQUE ATUAL</th>
+                            <th className="py-2 px-3 text-right w-28 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">VALOR DE VENDA (MTn)</th>
+                            <th className="py-2 px-3 text-center w-28 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">SELEÇÃO</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2015,20 +2046,20 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                                 key={p.id}
                                 className={`transition border-b border-slate-150 ${
                                   isInCart 
-                                    ? 'bg-blue-50/50 font-semibold' 
+                                    ? 'bg-blue-50/50' 
                                     : 'hover:bg-slate-50/70'
                                 }`}
                               >
-                                <td className="py-2 px-3 text-slate-900 text-left font-semibold whitespace-nowrap">{p.name}</td>
+                                <td className="py-2 px-3 text-slate-900 text-left whitespace-nowrap">{p.name}</td>
                                 <td className="py-2 px-3 text-slate-600 text-left font-sans text-xs whitespace-nowrap">
                                   {p.category}
                                 </td>
-                                <td className={`py-2 px-3 text-right font-mono font-bold whitespace-nowrap ${
-                                  isOutOfStock ? 'text-red-700 font-extrabold' : 'text-slate-750'
+                                <td className={`py-2 px-3 text-right font-mono whitespace-nowrap ${
+                                  isOutOfStock ? 'text-red-700' : 'text-slate-750'
                                 }`}>
                                   {isOutOfStock ? 'SEM ESTOQUE' : p.quantity}
                                 </td>
-                                <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                                <td className="py-2 px-3 text-right font-mono text-slate-900 whitespace-nowrap">
                                   {p.salePrice?.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
                                 </td>
                                 <td className="py-1 px-2 text-center">
@@ -2227,35 +2258,35 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                   </div>
                 ) : (
                   <div className="overflow-x-auto border border-slate-300 rounded shadow-sm">
-                    <table className="excel-grid min-w-full font-sans text-[11px]">
+                    <table className="excel-grid min-w-full font-sans text-[11px] border border-emerald-300">
                       <thead>
-                        <tr className="bg-slate-100">
-                          <th className="py-2 px-3 text-left w-20 whitespace-nowrap">Nº RECIBO</th>
-                          <th className="py-2 px-3 text-left whitespace-nowrap">DESCRIÇÃO DO PRODUTO</th>
-                          <th className="py-2 px-3 text-left w-28 whitespace-nowrap">CATEGORIA</th>
-                          <th className="py-2 px-3 text-right w-24 whitespace-nowrap">QTD</th>
-                          <th className="py-2 px-3 text-right w-28 whitespace-nowrap">PREÇO UNITÁRIO</th>
-                          <th className="py-2 px-3 text-right w-32 font-bold select-all whitespace-nowrap">VALOR TOTAL (MTn)</th>
-                          <th className="py-2 px-3 text-left w-44 whitespace-nowrap">OPERADOR EMISSOR</th>
-                          <th className="py-2 px-3 text-right w-36 whitespace-nowrap">DATA / HORA REGISTRO</th>
+                        <tr className="bg-emerald-700 text-white font-normal text-[11px]">
+                          <th className="py-2 px-3 text-left w-20 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">Nº RECIBO</th>
+                          <th className="py-2 px-3 text-left whitespace-nowrap !bg-emerald-700 !text-white !font-normal">DESCRIÇÃO</th>
+                          <th className="py-2 px-3 text-left w-28 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">CATEGORIA</th>
+                          <th className="py-2 px-3 text-right w-24 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">QTD</th>
+                          <th className="py-2 px-3 text-right w-28 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">PREÇO UNITÁRIO</th>
+                          <th className="py-2 px-3 text-right w-32 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">VALOR TOTAL (MTn)</th>
+                          <th className="py-2 px-3 text-left w-44 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">OPERADOR EMISSOR</th>
+                          <th className="py-2 px-3 text-right w-36 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">DATA / HORA REGISTRO</th>
                         </tr>
                       </thead>
                       <tbody>
                         {sales.map((s) => (
                           <tr key={`${s.id}_${s.productId}_${s.timestamp}`} className="hover:bg-slate-50 border-b border-slate-150">
-                            <td className="py-2 px-3 text-slate-800 text-left font-mono font-bold whitespace-nowrap">{s.id}</td>
-                            <td className="py-2 px-3 text-slate-900 text-left font-semibold whitespace-nowrap">{s.productName}</td>
+                            <td className="py-2 px-3 text-slate-800 text-left font-mono font-normal whitespace-nowrap">{s.id}</td>
+                            <td className="py-2 px-3 text-slate-900 text-left font-normal whitespace-nowrap">{s.productName}</td>
                             <td className="py-2 px-3 text-slate-600 text-left font-sans text-xs whitespace-nowrap">
                               {s.category}
                             </td>
-                            <td className="py-2 px-3 text-slate-750 text-right font-mono font-medium whitespace-nowrap">{s.quantity}</td>
-                            <td className="py-2 px-3 text-slate-600 text-right font-mono whitespace-nowrap">
+                            <td className="py-2 px-3 text-slate-755 text-right font-mono font-normal whitespace-nowrap">{s.quantity}</td>
+                            <td className="py-2 px-3 text-slate-600 text-right font-mono font-normal whitespace-nowrap">
                               {s.salePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
                             </td>
-                            <td className="py-2 px-3 text-emerald-800 text-right font-mono font-bold bg-slate-50/50 whitespace-nowrap">
+                            <td className="py-2 px-3 text-emerald-800 text-right font-mono font-normal bg-slate-50/50 whitespace-nowrap">
                               {s.totalPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
                             </td>
-                            <td className="py-2 px-3 text-slate-700 text-left font-semibold whitespace-nowrap">{s.sellerName}</td>
+                            <td className="py-2 px-3 text-slate-700 text-left font-normal whitespace-nowrap">{s.sellerName}</td>
                             <td className="py-2 px-3 text-slate-500 text-right font-mono whitespace-nowrap">
                               {new Date(s.timestamp).toLocaleDateString('pt-BR')} {new Date(s.timestamp).toLocaleTimeString('pt-BR')}
                             </td>
@@ -2281,26 +2312,26 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                     PAINEL DE CONSULTA AVANÇADA: Inventário Agrupado por Categoria Litúrgica
                   </span>
                   <p className="text-[11px] text-slate-500">
-                    Demonstração de estoque em tempo real. Linhas com estoque zerado (<code className="text-red-700 font-bold">0</code>) são automaticamente coloridas com formatação condicional Excel.
+                    Demonstração de estoque em tempo real agrupada por categoria paroquial.
                   </p>
                 </div>
               </div>
 
               {/* Loop over liturgical categories and render spreadsheet table with viewport scrolling and sticky header */}
-              <div className="overflow-x-auto border border-slate-300 rounded shadow-md bg-white">
+              <div className="overflow-x-auto border border-emerald-300 rounded shadow-md bg-white">
                 <table className="excel-grid min-w-full font-sans text-xs">
-                  <thead className="bg-slate-100 z-10 shadow-sm">
-                    <tr className="bg-slate-100 text-slate-800 border-b border-slate-300 font-mono">
-                      <th className="py-2.5 px-3 text-left w-36 whitespace-nowrap">CATEGORIA LITÚRGICA</th>
-                      <th className="py-2.5 px-3 text-left w-24 whitespace-nowrap">CÓDIGO (SKU)</th>
-                      <th className="py-2.5 px-3 text-left whitespace-nowrap">DESCRIÇÃO DO PRODUTO</th>
-                      <th className="py-2.5 px-3 text-right w-28 whitespace-nowrap">ESTOQUE ATUAL</th>
-                      <th className="py-2.5 px-3 text-right w-28 whitespace-nowrap">CUSTO UNITÁRIO</th>
-                      <th className="py-2.5 px-3 text-right w-32 whitespace-nowrap">PREÇO DE VENDA</th>
-                      <th className="py-2.5 px-3 text-right w-36 font-bold whitespace-nowrap">CUSTO TOTAL (MTn)</th>
-                      <th className="py-2.5 px-3 text-right w-36 font-bold whitespace-nowrap">PATRIMÓNIO ESPERADO (MTn)</th>
+                  <thead className="sticky top-0 z-10 shadow-sm">
+                    <tr className="bg-emerald-700 text-white font-sans text-xs">
+                      <th className="py-2.5 px-3 text-left w-36 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">CATEGORIA LITÚRGICA</th>
+                      <th className="hidden">CÓDIGO (SKU)</th>
+                      <th className="py-2.5 px-3 text-left whitespace-nowrap !bg-emerald-700 !text-white !font-normal">DESCRIÇÃO</th>
+                      <th className="py-2.5 px-3 text-right w-28 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">ESTOQUE ATUAL</th>
+                      <th className="py-2.5 px-3 text-right w-28 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">P/U</th>
+                      <th className="py-2.5 px-3 text-right w-32 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">PREÇO DE VENDA</th>
+                      <th className="py-2.5 px-3 text-right w-36 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">CUSTO TOTAL (MTn)</th>
+                      <th className="py-2.5 px-3 text-right w-36 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">Patrimonio</th>
                       {currentUser.role === 'Administrador' && (
-                        <th className="py-2.5 px-3 text-center w-36 whitespace-nowrap">AÇÕES</th>
+                        <th className="py-2.5 px-3 text-center w-36 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">AÇÕES</th>
                       )}
                     </tr>
                   </thead>
@@ -2313,7 +2344,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                         <React.Fragment key={cat}>
                           {/* Inner Category Divider Strip */}
                           <tr className="bg-slate-200 text-slate-800 font-bold uppercase text-[10px] tracking-wider border-y border-slate-300">
-                            <td colSpan={currentUser.role === 'Administrador' ? 9 : 8} className="py-2 px-3 text-left font-mono whitespace-nowrap">
+                            <td colSpan={currentUser.role === 'Administrador' ? 8 : 7} className="py-2 px-3 text-left font-mono whitespace-nowrap">
                               📂 CATEGORIA: {cat} ({categoryProducts.length} itens ativos)
                             </td>
                           </tr>
@@ -2326,40 +2357,40 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
                             // Formatação condicional: fundo vermelho claro, texto vermelho escuro
                             const conditionalRowClass = isOutOfStock
-                              ? 'bg-red-50 text-red-900 group-out-of-stock font-medium'
+                              ? 'bg-red-50 text-red-900 group-out-of-stock font-normal'
                               : 'hover:bg-slate-50/60 border-b border-slate-150';
 
                             return (
                               <tr key={p.id} className={conditionalRowClass}>
-                                <td className="py-2.5 px-3 font-mono text-slate-450 text-left font-medium whitespace-nowrap">{p.category}</td>
-                                <td className="py-2.5 px-3 font-mono text-slate-600 text-left font-bold whitespace-nowrap">{p.code}</td>
-                                <td className="py-2.5 px-3 text-slate-900 text-left font-semibold whitespace-nowrap">{p.name}</td>
+                                <td className="py-2.5 px-3 font-mono text-slate-450 text-left font-normal whitespace-nowrap">{p.category}</td>
+                                <td className="hidden">{p.code}</td>
+                                <td className="py-2.5 px-3 text-slate-900 text-left font-normal whitespace-nowrap">{p.name}</td>
                                 
                                 {/* Highlight Cell if Stock is 0 */}
-                                <td className={`py-2.5 px-3 text-right font-mono font-bold border-l border-slate-200 whitespace-nowrap ${
+                                <td className={`py-2.5 px-3 text-right font-mono border-l border-slate-200 whitespace-nowrap ${
                                   isOutOfStock 
-                                    ? 'bg-red-100 text-red-800 font-extrabold border-x border-red-300' 
-                                    : 'text-slate-800'
+                                    ? 'bg-red-100 text-red-800 border-x border-red-300 font-normal' 
+                                    : 'text-slate-800 font-normal'
                                 }`}>
                                   {isOutOfStock ? '0 COMPRAR JÁ' : p.quantity}
                                 </td>
                                 
-                                <td className="py-2.5 px-3 text-slate-650 text-right font-mono">
+                                <td className="py-2.5 px-3 text-slate-650 text-right font-mono font-normal">
                                   {p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
                                 </td>
                                 
-                                <td className={`py-2.5 px-3 text-right font-mono font-bold ${!p.salePrice ? 'text-amber-600' : 'text-slate-755'}`}>
+                                <td className={`py-2.5 px-3 text-right font-mono font-normal ${!p.salePrice ? 'text-amber-600' : 'text-slate-755'}`}>
                                   {p.salePrice 
                                     ? `${p.salePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn` 
                                     : 'NÃO PRECIFICADO'
                                   }
                                 </td>
                                 
-                                <td className="py-2.5 px-3 text-right font-mono text-slate-750 bg-slate-50/10 font-medium whitespace-nowrap">
+                                <td className="py-2.5 px-3 text-right font-mono text-slate-750 bg-slate-50/10 font-normal whitespace-nowrap">
                                   {totalCostValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
                                 </td>
                                 
-                                <td className="py-2.5 px-3 text-right font-mono text-slate-850 bg-slate-50/25 font-bold whitespace-nowrap">
+                                <td className="py-2.5 px-3 text-right font-mono text-slate-850 bg-slate-50/25 font-normal whitespace-nowrap">
                                   {p.salePrice 
                                     ? `${totalExpectedValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn`
                                     : '0,00 MTn'
@@ -2420,37 +2451,6 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
             return (
               <div id="area-relatorio" className="space-y-6">
                 
-                {/* Print Only Header with Parish Logo */}
-                <div className="hidden print:flex flex-col items-center justify-center text-center pb-5 border-b-2 border-slate-300 mb-6 w-full">
-                  {parishLogo ? (
-                    <img 
-                      src={parishLogo} 
-                      alt="Logo Paróquia" 
-                      className="w-20 h-20 object-contain rounded mb-2 mx-auto"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="w-16 h-16 bg-blue-600 rounded flex items-center justify-center text-white text-xl font-bold font-mono shadow-inner mb-2 mx-auto">
-                      STK
-                    </div>
-                  )}
-                  <h2 className="text-md font-black text-slate-900 uppercase font-mono tracking-tight leading-normal">
-                    PARÓQUIA NOSSA SENHORA DA IMACULADA CONCEIÇÃO
-                  </h2>
-                  <h3 className="text-xs font-bold text-slate-800 uppercase font-mono tracking-tight leading-none mt-0.5">
-                    SÉ CATEDRAL DE INHAMBANE
-                  </h3>
-                  <p className="text-[10px] text-slate-500 uppercase font-mono tracking-wider font-bold mt-1">
-                    SECRETARIA PAROQUIAL • INHAMBANE
-                  </p>
-                  <p className="text-[9px] text-slate-400 font-mono mt-1 uppercase">
-                    Relatório Analítico de Balanço
-                  </p>
-                  <p className="text-[10px] text-slate-405 font-mono mt-1">
-                    Filtro: {new Date(reportStartDate + 'T00:00:00').toLocaleDateString('pt-BR')} até {new Date(reportEndDate + 'T23:59:59').toLocaleDateString('pt-BR')}
-                  </p>
-                </div>
-
                 {/* Visual Settings Form Bar */}
                 <div className="bg-slate-50 p-4 border border-slate-300 rounded shadow-sm print-hide">
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wide font-mono block mb-3">
@@ -2482,12 +2482,13 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                       <label className="text-[10px] font-bold text-slate-500 block uppercase">Tipo de Relatório:</label>
                       <select
                         value={tipoRelatorio}
-                        onChange={(e) => setTipoRelatorio(e.target.value as 'vendas' | 'compras' | 'stock')}
+                        onChange={(e) => setTipoRelatorio(e.target.value as 'vendas' | 'compras' | 'stock' | 'despesas')}
                         className="px-3 py-1.5 bg-white border border-slate-300 rounded font-mono font-bold focus:border-blue-700 focus:outline-none w-full h-[32px] sm:w-48"
                       >
                         <option value="vendas">Vendas (Saídas)</option>
                         <option value="compras">Compras (Aquisições)</option>
                         <option value="stock">Stock Atual</option>
+                        <option value="despesas">Despesas</option>
                       </select>
                     </div>
 
@@ -2503,7 +2504,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                 </div>
 
                 {/* Analytical KPI Summary Cards (Excel Summary Box) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print-hide">
                   
                   {tipoRelatorio === 'compras' && (
                     <div className="bg-white p-4 rounded border border-slate-300 shadow-sm border-l-4 border-blue-600 col-span-1 sm:col-span-2 lg:col-span-4">
@@ -2513,6 +2514,18 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                       </h4>
                       <p className="text-[10px] text-slate-400 font-mono mt-1">
                         {rData.filteredPurchases.length} lotes / refills faturados
+                      </p>
+                    </div>
+                  )}
+
+                  {tipoRelatorio === 'despesas' && (
+                    <div className="bg-white p-4 rounded border border-slate-300 shadow-sm border-l-4 border-rose-600 col-span-1 sm:col-span-2 lg:col-span-4">
+                      <span className="text-[9px] text-rose-700 font-bold uppercase tracking-wider font-mono">Despesas / Saídas Lançadas</span>
+                      <h4 className="text-xl font-mono font-extrabold text-slate-800 mt-1">
+                        {rData.totalExpensesValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
+                      </h4>
+                      <p className="text-[10px] text-slate-400 font-mono mt-1">
+                        {rData.filteredExpenses.length} despesas encontradas na faixa de datas
                       </p>
                     </div>
                   )}
@@ -2623,20 +2636,20 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                           Nenhuma venda encontrada na faixa de datas.
                         </div>
                       ) : (
-                        <div className="overflow-x-auto border border-slate-300 rounded bg-white">
+                        <div className="overflow-x-auto border border-emerald-300 rounded bg-white">
                           <table className="excel-grid min-w-full font-sans text-[10px]">
                             <thead>
-                              <tr className="bg-slate-100">
-                                <th className="py-1.5 px-2 text-left">DESCRIÇÃO</th>
-                                <th className="py-1.5 px-2 text-right">QTD</th>
-                                <th className="py-1.5 px-2 text-right font-bold">TOTAL</th>
-                                <th className="py-1.5 px-2 text-right">DATA</th>
+                              <tr className="bg-emerald-700 text-white">
+                                <th className="py-1.5 px-2 text-left !bg-emerald-700 !text-white !font-normal">DESCRIÇÃO</th>
+                                <th className="py-1.5 px-2 text-right !bg-emerald-700 !text-white !font-normal">QTD</th>
+                                <th className="py-1.5 px-2 text-right !bg-emerald-700 !text-white !font-normal">TOTAL</th>
+                                <th className="py-1.5 px-2 text-right !bg-emerald-700 !text-white !font-normal">DATA</th>
                               </tr>
                             </thead>
                             <tbody>
                               {rData.filteredSales.map((s, idx) => (
                                 <tr key={`${s.id}_${s.productId}_${idx}`} className="hover:bg-slate-50 border-b border-slate-150">
-                                  <td className="py-2 px-2 text-slate-900 font-semibold whitespace-nowrap">{s.productName}</td>
+                                  <td className="py-2 px-2 text-slate-900 font-normal whitespace-nowrap">{s.productName}</td>
                                   <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{s.quantity}</td>
                                   <td className="py-2 px-2 text-right font-mono font-bold text-emerald-800">
                                     {s.totalPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
@@ -2646,6 +2659,27 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                                   </td>
                                 </tr>
                               ))}
+                              
+                              {/* Summary Totals Row for Vendas */}
+                              {(() => {
+                                const totalVal = rData.filteredSales.reduce((acc, s) => acc + s.totalPrice, 0);
+                                return (
+                                  <tr className="bg-slate-50 font-bold border-t-2 border-emerald-300">
+                                    <td className="py-2 px-2 text-left font-bold text-slate-900">
+                                      TOTAL GERAL
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono font-bold text-slate-400">
+                                      —
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono font-bold text-emerald-800 whitespace-nowrap">
+                                      {totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono text-slate-400">
+                                      —
+                                    </td>
+                                  </tr>
+                                );
+                              })()}
                             </tbody>
                           </table>
                         </div>
@@ -2665,14 +2699,14 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                           Nenhuma compra/entrada lançada na faixa de datas.
                         </div>
                       ) : (
-                        <div className="overflow-x-auto border border-slate-300 rounded bg-white">
+                        <div className="overflow-x-auto border border-emerald-300 rounded bg-white">
                           <table className="excel-grid min-w-full font-sans text-[10px]">
                             <thead>
-                              <tr className="bg-slate-100">
-                                <th className="py-1.5 px-2 text-left">DESCRIÇÃO</th>
-                                <th className="py-1.5 px-2 text-right">QTD ENTRADA</th>
-                                <th className="py-1.5 px-2 text-right font-bold">CUSTO TOTAL</th>
-                                <th className="py-1.5 px-2 text-right">DATA</th>
+                              <tr className="bg-emerald-700 text-white">
+                                <th className="py-1.5 px-2 text-left !bg-emerald-700 !text-white !font-normal">DESCRIÇÃO</th>
+                                <th className="py-1.5 px-2 text-right !bg-emerald-700 !text-white !font-normal">QTD ENTRADA</th>
+                                <th className="py-1.5 px-2 text-right !bg-emerald-700 !text-white !font-normal">CUSTO TOTAL</th>
+                                <th className="py-1.5 px-2 text-right !bg-emerald-700 !text-white !font-normal">DATA</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -2680,13 +2714,149 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                                 const calculatedCost = p.quantityAdded * p.costPrice;
                                 return (
                                   <tr key={p.id} className="hover:bg-slate-50 border-b border-slate-150">
-                                    <td className="py-2 px-2 text-slate-900 font-semibold whitespace-nowrap">{p.productName}</td>
+                                    <td className="py-2 px-2 text-slate-950 font-normal whitespace-nowrap">{p.productName}</td>
                                     <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{p.quantityAdded}</td>
                                     <td className="py-2 px-2 text-right font-mono font-bold text-blue-800">
                                       {calculatedCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
                                     </td>
                                     <td className="py-2 px-2 text-right font-mono text-slate-500">
                                       {new Date(p.timestamp).toLocaleDateString('pt-BR')}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              
+                              {/* Summary Totals Row for Compras */}
+                              {(() => {
+                                const totalVal = rData.filteredPurchases.reduce((acc, p) => acc + (p.quantityAdded * p.costPrice), 0);
+                                return (
+                                  <tr className="bg-slate-50 font-bold border-t-2 border-emerald-300">
+                                    <td className="py-2 px-2 text-left font-bold text-slate-900">
+                                      TOTAL GERAL
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono font-bold text-slate-400">
+                                      —
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono font-bold text-blue-800 whitespace-nowrap">
+                                      {totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono text-slate-400">
+                                      —
+                                    </td>
+                                  </tr>
+                                );
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Expenses Segment */}
+                  {tipoRelatorio === 'despesas' && (
+                    <div className="space-y-3">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                        <span className="text-xs font-bold text-rose-900 uppercase tracking-wide font-mono block">
+                          📉 DETALHAMENTO DE DESPESAS / SAÍDAS NO PERÍODO
+                        </span>
+                        
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingExpense(null);
+                            setIsExpenseModalOpen(true);
+                          }}
+                          className="flex items-center gap-1 text-[10px] font-bold bg-rose-700 hover:bg-rose-800 text-white font-mono py-1 px-2.5 rounded shadow transition cursor-pointer uppercase h-[26px]"
+                        >
+                          <Plus size={11} />
+                          <span>Adicionar Despesa</span>
+                        </button>
+                      </div>
+
+                      {rData.filteredExpenses.length === 0 ? (
+                        <div className="text-center py-10 bg-white border border-slate-200 rounded font-mono text-slate-400 text-xs">
+                          Nenhuma despesa ou saída cadastrada na faixa de datas configurada.
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto border border-emerald-300 rounded bg-white">
+                          <table className="excel-grid min-w-full font-sans text-[10px]">
+                            <thead>
+                              <tr className="bg-emerald-700 text-white">
+                                <th className="py-1.5 px-2 text-left !bg-emerald-700 !text-white !font-normal">JUSTIFICATIVA / DESCRIÇÃO</th>
+                                <th className="py-1.5 px-2 text-left w-36 !bg-emerald-700 !text-white !font-normal">CATEGORIA</th>
+                                <th className="py-1.5 px-2 text-right w-28 !bg-emerald-700 !text-white !font-normal">VALOR</th>
+                                <th className="py-1.5 px-2 text-center w-28 !bg-emerald-700 !text-white !font-normal">DATA</th>
+                                <th className="py-1.5 px-2 text-center w-24 !bg-emerald-700 !text-white !font-normal">AÇÕES</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rData.filteredExpenses.map((exp) => {
+                                const isUserAdmin = currentUser.role === 'Administrador';
+                                return (
+                                  <tr key={exp.id} className="hover:bg-slate-50 border-b border-slate-150">
+                                    <td className="py-2 px-2 text-slate-950 font-normal">{exp.description}</td>
+                                    <td className="py-2 px-2 whitespace-nowrap">
+                                      <span className="bg-rose-50 text-rose-700 border border-rose-200 font-bold px-1.5 py-0.5 rounded text-[9px] uppercase font-mono">
+                                        {exp.category}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-mono font-bold text-rose-800 whitespace-nowrap">
+                                      {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
+                                    </td>
+                                    <td className="py-2 px-2 text-center font-mono text-slate-600 whitespace-nowrap">
+                                      {new Date(exp.date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                    </td>
+                                    <td className="py-2 px-2 text-center whitespace-nowrap">
+                                      <div className="flex items-center justify-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingExpense(exp);
+                                            setIsExpenseModalOpen(true);
+                                          }}
+                                          title={isUserAdmin ? "Editar Despesa" : "Apenas Administradores podem editar"}
+                                          className={`p-1 rounded transition ${
+                                            isUserAdmin 
+                                              ? "hover:bg-slate-100 text-blue-650 hover:text-blue-800 cursor-pointer" 
+                                              : "text-slate-300 cursor-not-allowed opacity-40"
+                                          }`}
+                                          disabled={!isUserAdmin}
+                                        >
+                                          <Edit2 size={12} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={async () => {
+                                            if (confirm(`Tem certeza que deseja excluir esta despesa de ${exp.amount.toLocaleString('pt-BR')} MTn (${exp.category})?`)) {
+                                              try {
+                                                await dbService.deleteExpense(exp.id);
+                                                // Register audit log for deleting the expense
+                                                await dbService.log(
+                                                  currentUser.id,
+                                                  currentUser.name,
+                                                  'EXCLUSAO_DESPESA',
+                                                  `Excluída despesa (${exp.id}) de MTn ${exp.amount} na categoria "${exp.category}". Obs: ${exp.description}`
+                                                );
+                                                triggerStatus('success', 'Despesa excluída com sucesso!');
+                                                await loadData();
+                                              } catch (exErr) {
+                                                console.error(exErr);
+                                                triggerStatus('error', 'Falha ao excluir despesa.');
+                                              }
+                                            }
+                                          }}
+                                          title={isUserAdmin ? "Excluir Despesa" : "Apenas Administradores podem excluir"}
+                                          className={`p-1 rounded transition ${
+                                            isUserAdmin 
+                                              ? "hover:bg-red-50 text-red-650 hover:text-red-800 cursor-pointer" 
+                                              : "text-slate-300 cursor-not-allowed opacity-40"
+                                          }`}
+                                          disabled={!isUserAdmin}
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
                                     </td>
                                   </tr>
                                 );
@@ -2705,39 +2875,24 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                         📦 COMPOSIÇÃO DE STOCK ATUAL E VALORES DE AQUISIÇÃO
                       </span>
                       
-                      <div className="overflow-x-auto border border-slate-300 rounded bg-white">
+                      <div className="overflow-x-auto border border-emerald-300 rounded bg-white">
                         <table className="excel-grid min-w-full font-sans text-[10px]">
                           <thead>
-                            <tr className="bg-slate-100">
-                              <th className="py-1.5 px-2 text-left w-24">CÓDIGO (SKU)</th>
-                              <th className="py-1.5 px-2 text-left">DESCRIÇÃO DO PRODUTO</th>
-                              <th className="py-1.5 px-2 text-left w-36">GRUPO / CATEGORIA</th>
-                              <th className="py-1.5 px-2 text-right w-20">STOCK</th>
-                              <th className="py-1.5 px-2 text-right w-32 whitespace-nowrap">CUSTO UNITÁRIO</th>
+                            <tr className="bg-emerald-700 text-white">
+                              <th className="py-1.5 px-2 text-left font-semibold">DESCRIÇÃO</th>
+                              <th className="py-1.5 px-2 text-left w-36 font-semibold">CATEGORIA</th>
+                              <th className="py-1.5 px-2 text-right w-20 font-semibold">STOCK</th>
+                              <th className="py-1.5 px-2 text-right w-32 whitespace-nowrap font-semibold">P/U</th>
                               <th className="py-1.5 px-2 text-right w-32 font-bold whitespace-nowrap">VALOR TOTAL</th>
-                              <th className="py-1.5 px-2 text-center w-28">ESTADO</th>
                             </tr>
                           </thead>
                           <tbody>
                             {products.map(p => {
-                              const isZero = p.quantity === 0;
-                              const isLow = p.quantity > 0 && p.quantity <= p.minStock;
-                              let stockBadge = <span className="bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded text-[10px]">Normal</span>;
-                              
-                              if (p.type === 'servico') {
-                                stockBadge = <span className="bg-slate-100 text-slate-600 border border-slate-300 font-semibold px-2 py-0.5 rounded text-[10px]">Não Aplicável</span>;
-                              } else if (isZero) {
-                                stockBadge = <span className="bg-red-200 text-red-900 border border-red-300 font-bold px-2 py-0.5 rounded text-[10px]">Esgotado</span>;
-                              } else if (isLow) {
-                                stockBadge = <span className="bg-amber-100 text-amber-800 border border-amber-300 font-semibold px-2 py-0.5 rounded text-[10px]">Baixo</span>;
-                              }
-                              
                               const totalVal = p.type === 'servico' ? 0 : p.quantity * p.costPrice;
 
                               return (
                                 <tr key={p.id} className="hover:bg-slate-50 border-b border-slate-150">
-                                  <td className="py-2 px-2 font-mono text-slate-700 text-left font-bold">{p.code}</td>
-                                  <td className="py-2 px-2 text-slate-900 text-left font-bold whitespace-nowrap">{p.name}</td>
+                                  <td className="py-2 px-2 text-slate-900 text-left whitespace-nowrap">{p.name}</td>
                                   <td className="py-2 px-2 text-slate-650 text-left whitespace-nowrap">{p.category}</td>
                                   <td className="py-2 px-2 text-right font-mono whitespace-nowrap">
                                     {p.type === 'servico' ? 'N/A' : p.quantity}
@@ -2748,10 +2903,28 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                                   <td className="py-2 px-2 text-right font-mono font-bold text-slate-800">
                                     {p.type === 'servico' ? 'N/A' : `${totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn`}
                                   </td>
-                                  <td className="py-2 px-2 text-center">{stockBadge}</td>
                                 </tr>
                               );
                             })}
+                            
+                            {/* Summary Totals Row */}
+                            {(() => {
+                              const totalVal = products.reduce((acc, p) => acc + (p.type === 'servico' ? 0 : p.quantity * p.costPrice), 0);
+                              return (
+                                <tr className="bg-slate-50 font-bold border-t-2 border-emerald-300">
+                                  <td className="py-2.5 px-2 text-left font-bold text-slate-900" colSpan={2}>
+                                    TOTAL GERAL
+                                  </td>
+                                  <td className="py-2.5 px-2 text-right font-mono font-bold text-slate-400">
+                                    —
+                                  </td>
+                                  <td className="py-2.5 px-2 text-right font-mono text-slate-400">—</td>
+                                  <td className="py-2.5 px-2 text-right font-mono font-bold text-emerald-800 whitespace-nowrap">
+                                    {totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MTn
+                                  </td>
+                                </tr>
+                              );
+                            })()}
                           </tbody>
                         </table>
                       </div>
@@ -2762,7 +2935,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
 
                 {/* BUSCA HISTÓRICA / SEGUNDA VIA DE RECIBOS */}
                 <div className="bg-white border border-slate-350 rounded-lg shadow-sm overflow-hidden print-hide">
-                  <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between">
+                  <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between print-hide">
                     <span className="font-bold text-xs uppercase tracking-wider font-mono flex items-center gap-2">
                       <Search size={14} className="text-amber-400" />
                       Segunda Via de Recibo Eletrónico (Pesquisa Histórica)
@@ -2781,7 +2954,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                   </div>
 
                   <div className="p-4 space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 print-hide">
                       {/* Search Input */}
                       <div className="space-y-1">
                         <label className="block text-[10px] font-mono font-bold uppercase text-slate-500">Nome do Fiel / Telefone / ID Recibo</label>
@@ -2818,16 +2991,16 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                     </div>
 
                     {/* Receipts List Table */}
-                    <div className="border border-slate-300 rounded overflow-hidden">
+                    <div className="border border-emerald-300 rounded overflow-hidden">
                       <div className="max-h-[220px] overflow-y-auto">
                         <table className="excel-grid min-w-full font-sans text-xs">
                           <thead>
-                            <tr className="bg-slate-100 text-slate-700 font-mono font-bold text-[10px] border-b border-slate-300">
-                              <th className="py-2 px-3 text-left whitespace-nowrap">FILIAÇÃO / CLIENTE</th>
-                              <th className="py-2 px-3 text-left whitespace-nowrap">CONTACTO</th>
-                              <th className="py-2 px-3 text-right whitespace-nowrap">VALOR OPERADO</th>
-                              <th className="py-2 px-3 text-center whitespace-nowrap flex-nowrap">DATA E HORA</th>
-                              <th className="py-2 px-3 text-center w-36 whitespace-nowrap">AÇÃO</th>
+                            <tr className="bg-emerald-700 text-white font-sans text-xs">
+                              <th className="py-2 px-3 text-left whitespace-nowrap !bg-emerald-700 !text-white !font-normal">FILIAÇÃO / CLIENTE</th>
+                              <th className="py-2 px-3 text-left whitespace-nowrap !bg-emerald-700 !text-white !font-normal">CONTACTO</th>
+                              <th className="py-2 px-3 text-right whitespace-nowrap !bg-emerald-700 !text-white !font-normal">VALOR OPERADO</th>
+                              <th className="py-2 px-3 text-center whitespace-nowrap flex-nowrap !bg-emerald-700 !text-white !font-normal">DATA E HORA</th>
+                              <th className="py-2 px-3 text-center w-36 whitespace-nowrap !bg-emerald-700 !text-white !font-normal">AÇÃO</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2840,7 +3013,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                             ) : (
                               filteredReceipts.map((rec) => (
                                 <tr key={rec.id} className="hover:bg-slate-50 border-b border-slate-150 bg-white">
-                                  <td className="py-2 px-3 text-left font-bold text-slate-800 uppercase whitespace-nowrap">
+                                  <td className="py-2 px-3 text-left font-normal text-slate-800 uppercase whitespace-nowrap">
                                     {rec.customerName}
                                   </td>
                                   <td className="py-2 px-3 text-left font-mono whitespace-nowrap">{rec.customerPhone || '—'}</td>
@@ -2886,15 +3059,15 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                   📂 FICHÁRIO COMPLETO: Operadores Autorizados na Secretaria
                 </span>
                 
-                <div className="overflow-x-auto border border-slate-300 rounded shadow-sm bg-white">
+                <div className="overflow-x-auto border border-emerald-300 rounded shadow-sm bg-white">
                   <table className="excel-grid min-w-full font-sans text-xs">
                     <thead>
-                      <tr className="bg-slate-150 text-slate-800 border-b border-slate-300 font-mono">
-                        <th className="py-1.5 px-3 text-left whitespace-nowrap">NOME COMPLETO DO OPERADOR</th>
-                        <th className="py-1.5 px-3 text-left w-44 whitespace-nowrap">PERMISSÃO CORPORATIVA</th>
-                        <th className="py-1.5 px-3 text-center w-28 whitespace-nowrap">NÚMERO PIN acesso</th>
-                        <th className="py-1.5 px-3 text-center w-36 whitespace-nowrap">ESTADO DO CADASTRO</th>
-                        <th className="py-1.5 px-3 text-right w-48 whitespace-nowrap">CADASTRO CRIADO EM</th>
+                      <tr className="bg-emerald-700 text-white font-sans text-xs">
+                        <th className="py-1.5 px-3 text-left whitespace-nowrap !bg-emerald-700 !text-white !font-normal font-sans">NOME COMPLETO DO OPERADOR</th>
+                        <th className="py-1.5 px-3 text-left w-44 whitespace-nowrap !bg-emerald-700 !text-white !font-normal font-sans">PERMISSÃO CORPORATIVA</th>
+                        <th className="py-1.5 px-3 text-center w-28 whitespace-nowrap !bg-emerald-700 !text-white !font-normal font-sans">NÚMERO PIN acesso</th>
+                        <th className="py-1.5 px-3 text-center w-36 whitespace-nowrap !bg-emerald-700 !text-white !font-normal font-sans">ESTADO DO CADASTRO</th>
+                        <th className="py-1.5 px-3 text-right w-48 whitespace-nowrap !bg-emerald-700 !text-white !font-normal font-sans">CADASTRO CRIADO EM</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2902,11 +3075,11 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                         const isActive = u.id === currentUser.id;
                         return (
                           <tr key={u.id} className={isActive ? 'bg-amber-50/40 font-medium border-b border-amber-200' : 'hover:bg-slate-50 border-b border-slate-150'}>
-                            <td className="py-1.5 px-3 text-slate-900 text-left font-bold whitespace-nowrap">
+                            <td className="py-1.5 px-3 text-slate-900 text-left font-normal whitespace-nowrap">
                               <button
                                 type="button"
                                 onClick={() => handleOpenUserActions(u)}
-                                className="text-blue-700 hover:text-blue-900 hover:underline font-bold font-sans text-xs text-left cursor-pointer flex items-center gap-2 focus:outline-none"
+                                className="text-blue-700 hover:text-blue-900 hover:underline font-normal font-sans text-xs text-left cursor-pointer flex items-center gap-2 focus:outline-none"
                               >
                                 {u.name}
                                 {isActive && (
@@ -2958,14 +3131,14 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
                   </button>
                 </div>
 
-                <div className="overflow-x-auto border border-slate-300 rounded shadow-md bg-white">
+                <div className="overflow-x-auto border border-emerald-300 rounded shadow-md bg-white">
                   <table className="excel-grid min-w-full font-sans text-xs">
-                    <thead className="bg-slate-100 z-10 font-mono shadow-inner">
-                      <tr>
-                        <th className="py-2 px-3 text-left w-36">AÇÃO REGISTRADA</th>
-                        <th className="py-2 px-3 text-left w-48">USUÁRIO EMISSOR</th>
-                        <th className="py-2 px-3 text-left">HISTÓRICO TÉCNICO COMPLETO DA ATIVIDADE</th>
-                        <th className="py-2 px-3 text-right w-44">DATA / HORA DO EVENTO</th>
+                    <thead>
+                      <tr className="bg-emerald-700 text-white font-sans text-xs">
+                        <th className="py-2 px-3 text-left w-36 !bg-emerald-700 !text-white !font-normal">AÇÃO REGISTRADA</th>
+                        <th className="py-2 px-3 text-left w-48 !bg-emerald-700 !text-white !font-normal">USUÁRIO EMISSOR</th>
+                        <th className="py-2 px-3 text-left !bg-emerald-700 !text-white !font-normal">HISTÓRICO TÉCNICO COMPLETO DA ATIVIDADE</th>
+                        <th className="py-2 px-3 text-right w-44 !bg-emerald-700 !text-white !font-normal">DATA / HORA DO EVENTO</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3010,33 +3183,41 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
       <footer className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t-2 border-blue-650 shadow-[0_-5px_15px_rgba(0,0,0,0.2)] z-30 print-hide">
         
         {/* Real-time KPI Ribbon - 3 Excel/WPF Style compact indicator cards */}
-        <div className="max-w-7xl mx-auto px-4 py-2 gap-3 bg-slate-900 grid grid-cols-1 sm:grid-cols-3">
+        <div className="max-w-7xl mx-auto px-1.5 sm:px-4 py-1.5 sm:py-2 gap-1.5 sm:gap-3 bg-slate-900 grid grid-cols-3">
           
           {/* Card 1: Despesas Diárias */}
-          <div className="bg-slate-850 border border-slate-700 rounded p-2 flex items-center justify-between shadow-inner hover:border-slate-500 transition duration-150">
-            <div className="text-left font-sans">
-              <span className="text-[9px] text-slate-400 block font-mono font-bold uppercase tracking-wider">DESPESAS DIÁRIAS (HOJE)</span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <strong className="text-xs text-rose-400 font-mono">
-                  {dailyExpensesValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
+          <div className="bg-slate-850 border border-slate-700 rounded p-1 sm:p-2 flex items-center justify-between shadow-inner hover:border-slate-500 transition duration-150 min-w-0">
+            <div className="text-left font-sans min-w-0">
+              <span className="text-[7.5px] sm:text-[9px] text-slate-400 block font-mono font-bold uppercase tracking-wider truncate">
+                DESPESAS<span className="hidden sm:inline"> DIÁRIAS (HOJE)</span>
+              </span>
+              <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                <strong className="text-[10px] sm:text-xs text-rose-400 font-mono truncate block">
+                  {dailyExpensesValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-[8px] sm:text-[10px] ml-0.5">MTn</span>
                 </strong>
               </div>
             </div>
-            <div className="bg-rose-955/20 p-1.5 rounded border border-rose-900/40 shrink-0">
-              <TrendingDown size={13} className="text-rose-400" />
+            <div className="bg-rose-955/20 p-1 rounded border border-rose-900/40 shrink-0 hidden md:flex">
+              <TrendingDown size={12} className="text-rose-400" />
             </div>
           </div>
 
           {/* Card 2: Vendas Diárias */}
-          <div className="bg-slate-850 border border-slate-700 rounded p-2 flex items-center justify-between shadow-inner">
-            <div className="text-left">
-              <span className="text-[9px] text-slate-400 block font-mono font-bold uppercase tracking-wider">VENDAS DIÁRIAS (HOJE)</span>
-              <strong className="text-xs text-emerald-400 font-mono">
-                {dailySalesValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
-              </strong>
+          <div className="bg-slate-850 border border-slate-700 rounded p-1 sm:p-2 flex items-center justify-between shadow-inner hover:border-slate-500 transition duration-150 min-w-0">
+            <div className="text-left font-sans min-w-0">
+              <span className="text-[7.5px] sm:text-[9px] text-slate-400 block font-mono font-bold uppercase tracking-wider truncate">
+                VENDAS<span className="hidden sm:inline"> DIÁRIAS (HOJE)</span>
+              </span>
+              <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                <strong className="text-[10px] sm:text-xs text-emerald-400 font-mono truncate block">
+                  {dailySalesValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-[8px] sm:text-[10px] ml-0.5">MTn</span>
+                </strong>
+              </div>
             </div>
-            <div className="bg-emerald-955/20 p-1.5 rounded border border-emerald-900/40 shrink-0">
-              <TrendingUp size={13} className="text-emerald-400" />
+            <div className="bg-emerald-955/20 p-1 rounded border border-emerald-900/40 shrink-0 hidden md:flex">
+              <TrendingUp size={12} className="text-emerald-400" />
             </div>
           </div>
 
@@ -3047,15 +3228,20 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
             const balanceBg = isPositive ? 'bg-emerald-955/20 border-emerald-700/50' : 'bg-rose-955/20 border-rose-700/50';
 
             return (
-              <div className="bg-slate-850 border border-slate-700 rounded p-2 flex items-center justify-between shadow-inner">
-                <div className="text-left">
-                  <span className="text-[9px] text-slate-400 block font-mono font-bold uppercase tracking-wider">SALDO OPERACIONAL DIÁRIO</span>
-                  <strong className={`text-xs font-mono whitespace-nowrap ${balanceColor}`}>
-                    {dailyOperationalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MTn
-                  </strong>
+              <div className="bg-slate-850 border border-slate-700 rounded p-1 sm:p-2 flex items-center justify-between shadow-inner min-w-0">
+                <div className="text-left font-sans min-w-0">
+                  <span className="text-[7.5px] sm:text-[9px] text-slate-400 block font-mono font-bold uppercase tracking-wider truncate">
+                    SALDO<span className="hidden sm:inline"> OPERACIONAL DIÁRIO</span>
+                  </span>
+                  <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                    <strong className={`text-[10px] sm:text-xs font-mono truncate block ${balanceColor}`}>
+                      {dailyOperationalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <span className="text-[8px] sm:text-[10px] ml-0.5">MTn</span>
+                    </strong>
+                  </div>
                 </div>
-                <div className={`p-1.5 rounded border shrink-0 ${balanceBg}`}>
-                  <Coins size={13} className={isPositive ? 'text-emerald-400' : 'text-rose-400'} />
+                <div className={`p-1 rounded border shrink-0 hidden md:flex ${balanceBg}`}>
+                  <Coins size={12} className={isPositive ? 'text-emerald-400' : 'text-rose-400'} />
                 </div>
               </div>
             );
@@ -3064,7 +3250,7 @@ export default function MainDashboard({ currentUser, onLogout }: MainDashboardPr
         </div>
 
         {/* Bottom Windows Status strip */}
-        <div className="bg-slate-800 text-slate-400 text-[10px] px-6 py-1.5 border-t border-slate-700 flex flex-col sm:flex-row justify-between items-center font-mono gap-1 sm:gap-0">
+        <div className="bg-slate-800 text-slate-400 text-[10px] px-6 py-1.5 border-t border-slate-700 hidden md:flex flex-col sm:flex-row justify-between items-center font-mono gap-1 sm:gap-0">
           <div>
             <span>Licença: <strong className="text-white">Paróquia Sagrada Família de Nazaré</strong></span>
           </div>
@@ -4349,12 +4535,20 @@ Muito obrigado por sua contribuição e preferência! Que Deus o abençoe!`;
 
       <NovaDespesaModal
         isOpen={isExpenseModalOpen}
-        onClose={() => setIsExpenseModalOpen(false)}
+        onClose={() => {
+          setIsExpenseModalOpen(false);
+          setEditingExpense(null);
+        }}
         onSaveSuccess={async () => {
-          triggerStatus('success', 'Despesa/Saída cadastrada e debitada com sucesso!');
+          if (editingExpense) {
+            triggerStatus('success', 'Despesa/Saída editada com sucesso!');
+          } else {
+            triggerStatus('success', 'Despesa/Saída cadastrada e debitada com sucesso!');
+          }
           await loadData();
         }}
         currentUser={currentUser}
+        editingExpense={editingExpense}
       />
     </div>
   );

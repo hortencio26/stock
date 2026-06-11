@@ -94,6 +94,20 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "productId", "productName", "category", "quantityAdded", "costPrice", "buyerId", "buyerName", "timestamp"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Record of a parish operating expense/outgoing cash flow",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "category", "amount", "description", "date", "createdAt"]
     }
   },
   "firestore": {
@@ -120,6 +134,10 @@
     "/purchase_logs/{purchaseId}": {
       "schema": "PurchaseLog",
       "description": "Stock inventory purchase logs history"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Parish operational expenses tracking data"
     }
   }
 }

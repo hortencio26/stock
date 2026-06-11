@@ -102,41 +102,50 @@ export function ensureAuthReady(): Promise<void> {
       resolve();
       return;
     }
+
     if (auth.currentUser) {
       resolve();
       return;
     }
 
     let resolved = false;
-    const unsubscribe = auth.onAuthStateChanged(async (user) => {
-      unsubscribe();
-      if (!resolved) {
-        resolved = true;
-        if (user) {
+    let unsubscribe: () => void;
+
+    unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        if (unsubscribe) unsubscribe();
+        if (!resolved) {
+          resolved = true;
           resolve();
-        } else {
-          try {
-            await signInAnonymously(auth);
-          } catch (authError: any) {
-            console.warn("Autenticação anônima pendente.");
+        }
+      } else {
+        try {
+          await signInAnonymously(auth);
+        } catch (authError: any) {
+          console.warn("Autenticação anônima pendente.", authError);
+          if (unsubscribe) unsubscribe();
+          if (!resolved) {
+            resolved = true;
+            resolve();
           }
-          resolve();
         }
       }
     }, () => {
-      unsubscribe();
+      if (unsubscribe) unsubscribe();
       if (!resolved) {
         resolved = true;
         resolve();
       }
     });
 
+    // Fallback timeout so we never hang indefinitely
     setTimeout(() => {
+      if (unsubscribe) unsubscribe();
       if (!resolved) {
         resolved = true;
         resolve();
       }
-    }, 2500);
+    }, 5000);
   });
 
   return isAuthReadyPromise;
